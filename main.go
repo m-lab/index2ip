@@ -40,6 +40,7 @@ type CniConfig struct {
 
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
+	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
 	config := &CniConfig{CniVersion: "0.2.0"}
 
 	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
@@ -71,6 +72,8 @@ func DiscoverIndex() (int64, error) {
 	// should be using kubernetes annotations. Instead we are using bad
 	// name-munging hacks.
 	// TODO: Fix this to use k8s annotations.
+
+	// Example CNI_ARGS: "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b"
 	podNameRe := regexp.MustCompile(`\bK8S_POD_NAME=([^;]*)`)
 	podNameMatches := podNameRe.FindStringSubmatch(os.Getenv("CNI_ARGS"))
 	if len(podNameMatches) != 2 {
@@ -93,10 +96,10 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 	if err != nil {
 		return errors.New("Could not parse IPv4 address: " + config.IPv4.IP)
 	}
-	if d+index > 255 {
-		return errors.New("Index too large for address")
+	if d+index > 255 || index < 0 {
+		return errors.New("Index out of range for address")
 	}
-	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d + index, subnet)
+	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
 	return nil
 }
 
@@ -122,7 +125,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Could not read /proc/cmdline: ", err)
 	}
-	config, err := MakeIPConfig(string(procCmdline))
+	config, err := MakeIPConfig(procCmdline)
 	if err != nil {
 		log.Fatal("Could not populate the IP configuration: ", err)
 	}
