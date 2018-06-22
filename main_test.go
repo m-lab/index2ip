@@ -149,6 +149,28 @@ func TestReadProcCmdlineOrEnv(t *testing.T) {
 	os.Unsetenv("PROC_CMDLINE")
 }
 
+func TestConfigStructure(t *testing.T) {
+	jsonString := `{
+  "cniVersion": "0.2.0",
+  "ip4": {
+      "ip": "1.2.3.4/26",
+      "gateway": "1.2.3.65",
+      "routes": [ { "dst": "0.0.0.0/0" } ]
+  },
+  "dns": {
+      "nameservers": [
+          "8.8.8.8",
+          "8.8.4.4"
+      ]
+  }
+}`
+	config := CniConfig{}
+	err := json.Unmarshal([]byte(jsonString), &config)
+	if err != nil {
+		t.Error(err)
+	}
+}
+
 func TestEndToEnd(t *testing.T) {
 	// Set up the environment to look just like it should when the program gets called.
 	if _, isPresent := os.LookupEnv("PROC_CMDLINE"); isPresent {

@@ -20,9 +20,14 @@ import (
 
 // IPConfig holds the IP configuration. The elements are strings to support v4 or v6.
 type IPConfig struct {
-	IP      string   `json:"ip"`
-	Gateway string   `json:"gateway"`
-	Routes  []string `json:"routes"`
+	IP      string        `json:"ip"`
+	Gateway string        `json:"gateway"`
+	Routes  []RouteConfig `json:"routes"`
+}
+
+// RouteConfig holds the subnets for which an interface should receive packets.
+type RouteConfig struct {
+	Destination string `json:"dst"`
 }
 
 // DNSConfig holds a list of IP addresses for nameservers.
@@ -58,7 +63,9 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	config.IPv4 = &IPConfig{
 		IP:      v4Config[0],
 		Gateway: v4Config[1],
-		Routes:  []string{"0.0.0.0/0"},
+		Routes: []RouteConfig{
+			RouteConfig{Destination: "0.0.0.0/0"},
+		},
 	}
 	config.DNS = &DNSConfig{Nameservers: []string{v4Config[2], v4Config[3]}}
 
