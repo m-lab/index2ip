@@ -58,6 +58,12 @@ func TestDiscoverIndex(t *testing.T) {
 		t.Error("Could not discover index")
 	}
 
+	os.Setenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4-gmwz8;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
+	index, err = DiscoverIndex()
+	if err != nil || index != 4 {
+		t.Error("Could not discover index")
+	}
+
 	badArgs := []string{
 		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b",
 		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-ind4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b",
