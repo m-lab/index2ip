@@ -2,12 +2,15 @@ package main
 
 // A CNI IPAM plugin that takes /proc/cmdline and the environment variables and
 // outputs the CNI configuration required for the external IP address for the
-// pod in question.
+// pod in question.  IPAM plugins send and receive JSON on stdout and stdin,
+// respectively, and are passed arguments and configuration information via
+// environment variables and the aforementioned JSON.
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -126,6 +129,25 @@ func ReadProcCmdline() (string, error) {
 	return string(procCmdline), nil
 }
 
+// ReadIndexFromJSON unmarshals JSON input to read the index argument contained therein.
+func ReadIndexFromJSON(r io.Reader) (int64, error) {
+	type JSONInput struct {
+		Ipam struct {
+			Index int64 `json:"index"`
+		} `json:"ipam"`
+	}
+	dec := json.NewDecoder(r)
+	config := JSONInput{}
+	err := dec.Decode(&config)
+	if err != nil {
+		return -1, err
+	}
+	if config.Ipam.Index == 0 {
+		return -1, errors.New("the index was either 0 or not found")
+	}
+	return config.Ipam.Index, nil
+}
+
 // Put it all together.
 func main() {
 	procCmdline, err := ReadProcCmdline()
@@ -136,9 +158,13 @@ func main() {
 	if err != nil {
 		log.Fatal("Could not populate the IP configuration: ", err)
 	}
-	index, err := DiscoverIndex()
+	index, err := ReadIndexFromJSON(os.Stdin)
 	if err != nil {
-		log.Fatal("Could not discover the index :", err)
+		// Fallback to deprecated method.
+		index, err = DiscoverIndex()
+		if err != nil {
+			log.Fatal("Could not discover the index :", err)
+		}
 	}
 	err = AddIndexToIP(config, index)
 	if err != nil {
