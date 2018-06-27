@@ -2,7 +2,9 @@ package main
 
 // A CNI IPAM plugin that takes /proc/cmdline and the environment variables and
 // outputs the CNI configuration required for the external IP address for the
-// pod in question.
+// pod in question.  IPAM plugins send and receive JSON on stdout and stdin,
+// respectively, and are passed arguments and configuration information via
+// environment variables and the aforementioned JSON.
 
 import (
 	"encoding/json"
@@ -127,8 +129,8 @@ func ReadProcCmdline() (string, error) {
 	return string(procCmdline), nil
 }
 
-// ReadIndex unmarshals JSON input to read the index argument contained therein.
-func ReadIndex(r io.Reader) (int64, error) {
+// ReadIndexFromJSON unmarshals JSON input to read the index argument contained therein.
+func ReadIndexFromJSON(r io.Reader) (int64, error) {
 	type JSONInput struct {
 		Ipam struct {
 			Index int64 `json:"index"`
@@ -156,7 +158,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Could not populate the IP configuration: ", err)
 	}
-	index, err := ReadIndex(os.Stdin)
+	index, err := ReadIndexFromJSON(os.Stdin)
 	if err != nil {
 		// Fallback to deprecated method.
 		index, err = DiscoverIndex()

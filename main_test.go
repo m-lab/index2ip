@@ -173,12 +173,12 @@ func TestConfigStructure(t *testing.T) {
 	}
 }
 
-func TestReadIndex(t *testing.T) {
+func TestReadIndexFromJSON(t *testing.T) {
 	// Input taken from real input.
 	input := `{"ipam":{"index":4,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`
-	index, err := ReadIndex(strings.NewReader(input))
+	index, err := ReadIndexFromJSON(strings.NewReader(input))
 	if err != nil {
-		t.Error("ReadIndex error:", err)
+		t.Error("ReadIndexFromJSON error:", err)
 	}
 	if index != 4 {
 		t.Error("Index should be 4, but was", index)
@@ -195,7 +195,7 @@ func TestReadIndex(t *testing.T) {
 		`}`,
 	}
 	for _, bad := range badInput {
-		index, err = ReadIndex(strings.NewReader(bad))
+		index, err = ReadIndexFromJSON(strings.NewReader(bad))
 		if err == nil || index >= 0 {
 			t.Errorf("Should have encountered an error on input: '%s'", bad)
 		}
