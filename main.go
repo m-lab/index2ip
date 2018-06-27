@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -126,6 +127,25 @@ func ReadProcCmdline() (string, error) {
 	return string(procCmdline), nil
 }
 
+// ReadIndex unmarshals JSON input to read the index argument contained therein.
+func ReadIndex(r io.Reader) (int64, error) {
+	type JSONInput struct {
+		Ipam struct {
+			Index int64 `json:"index"`
+		} `json:"ipam"`
+	}
+	dec := json.NewDecoder(r)
+	config := JSONInput{}
+	err := dec.Decode(&config)
+	if err != nil {
+		return -1, err
+	}
+	if config.Ipam.Index == 0 {
+		return -1, errors.New("the index was either 0 or not found")
+	}
+	return config.Ipam.Index, nil
+}
+
 // Put it all together.
 func main() {
 	procCmdline, err := ReadProcCmdline()
@@ -136,9 +156,13 @@ func main() {
 	if err != nil {
 		log.Fatal("Could not populate the IP configuration: ", err)
 	}
-	index, err := DiscoverIndex()
+	index, err := ReadIndex(os.Stdin)
 	if err != nil {
-		log.Fatal("Could not discover the index :", err)
+		// Fallback to deprecated method.
+		index, err = DiscoverIndex()
+		if err != nil {
+			log.Fatal("Could not discover the index :", err)
+		}
 	}
 	err = AddIndexToIP(config, index)
 	if err != nil {

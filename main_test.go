@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -171,6 +173,35 @@ func TestConfigStructure(t *testing.T) {
 	}
 }
 
+func TestReadIndex(t *testing.T) {
+	// Input taken from real input.
+	input := `{"ipam":{"index":4,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`
+	index, err := ReadIndex(strings.NewReader(input))
+	if err != nil {
+		t.Error("ReadIndex error:", err)
+	}
+	if index != 4 {
+		t.Error("Index should be 4, but was", index)
+	}
+
+	// Now try with bad input
+	badInput := []string{
+		`{"ipam":{"index":"monkey"}}`,
+		`{"ipam":{"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`,
+		`{"spam":{"index":4,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`,
+		`{}`,
+		``,
+		`{{}`,
+		`}`,
+	}
+	for _, bad := range badInput {
+		index, err = ReadIndex(strings.NewReader(bad))
+		if err == nil || index >= 0 {
+			t.Errorf("Should have encountered an error on input: '%s'", bad)
+		}
+	}
+}
+
 func TestEndToEnd(t *testing.T) {
 	// Set up the environment to look just like it should when the program gets called.
 	if _, isPresent := os.LookupEnv("PROC_CMDLINE"); isPresent {
@@ -185,21 +216,44 @@ func TestEndToEnd(t *testing.T) {
 	os.Setenv("PROC_CMDLINE", "rootflags=rw mount.usrflags=ro epoxy.ip=4.14.159.112::4.14.159.65:255.255.255.192:mlab4.lga0t.measurement-lab.org:eth0:off:8.8.8.8:8.8.4.4 epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.ipv6=2001:1900:2100:2d::112/64,2001:1900:2100:2d::1,2001:4860:4860::8888,2001:4860:4860::8844 epoxy.interface=eth0 epoxy.hostname=mlab4.lga0t.measurement-lab.org epoxy.stage3=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/4WT11StThCp5AUHOYU0RJmpDE7g/stage3 epoxy.report=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/fK8SBsveTTf7kv90RNkfM6FLfmo/report epoxy.allocate_k8s_token=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/wDBfLAQlFu37jEsHsCNT40UrIk8/extension/allocate_k8s_token epoxy.server=boot-api-dot-mlab-sandbox.appspot.com epoxy.project=mlab-sandbox net.ifnames=0 coreos.autologin=tty1")
 	// Actual CNI_ARGS taken from a call to this plugin on that same server.
 	os.Setenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	go func() {
-		main()
-		w.Close()
-	}()
-	output, _ := ioutil.ReadAll(r)
-	os.Stdout = oldStdout
+
+	// The IP address in this test comes from the PROC_CMDLINE environment variable.
+	if "4.14.159.116/26" != WithInputTestEndToEnd(t, "") {
+		t.Error("Wrong IP returned when no input was provided")
+	}
+	// The IP address in this test should come from the parsed index on stdin.
+	if "4.14.159.117/26" != WithInputTestEndToEnd(t, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`) {
+		t.Error("Wrong IP returned when index 5 was provided")
+	}
+
+	// Fix the surrounding environment.
 	os.Unsetenv("CNI_ARGS")
 	os.Unsetenv("PROC_CMDLINE")
+}
+
+func WithInputTestEndToEnd(t *testing.T, input string) string {
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, _ := os.Pipe()
+	os.Stdout = stdoutW
+
+	oldStdin := os.Stdin
+	stdinR, stdinW, _ := os.Pipe()
+	os.Stdin = stdinR
+
+	go func() {
+		main()
+		stdoutW.Close()
+	}()
+	fmt.Fprint(stdinW, input)
+	stdinW.Close()
+	output, _ := ioutil.ReadAll(stdoutR)
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
 
 	config := CniConfig{}
 	json.Unmarshal(output, &config)
-	if config.CniVersion != "0.2.0" || config.IPv4.IP != "4.14.159.116/26" || config.IPv4.Gateway != "4.14.159.65" {
+	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
 		t.Error("Bad data output from index2ip: ", string(output))
 	}
+	return config.IPv4.IP
 }
