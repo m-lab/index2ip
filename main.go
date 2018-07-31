@@ -67,7 +67,7 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 		IP:      v4Config[0],
 		Gateway: v4Config[1],
 		Routes: []RouteConfig{
-			RouteConfig{Destination: "0.0.0.0/0"},
+			{Destination: "0.0.0.0/0"},
 		},
 	}
 	config.DNS = &DNSConfig{Nameservers: []string{v4Config[2], v4Config[3]}}
