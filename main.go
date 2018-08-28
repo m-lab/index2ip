@@ -12,11 +12,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+
+	r "github.com/m-lab/go/runtimeext"
 )
 
 // Configuration objects to hold the CNI config that must be marshalled into Stdout
@@ -113,20 +114,20 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 	return nil
 }
 
-// ReadProcCmdline reads /proc/cmdline or (if present) the environment variable
-// PROC_CMDLINE (to aid in testing).  The PROC_CMDLINE environment variable
-// should only be used for unit testing, and should not be used in production.
-// No guarantee of future compatibility is made or implied if you use
-// PROC_CMDLINE for anything other than unit testing.
-func ReadProcCmdline() (string, error) {
+// MustReadProcCmdline reads /proc/cmdline or (if present) the environment
+// variable PROC_CMDLINE (to aid in testing).  The PROC_CMDLINE environment
+// variable should only be used for unit testing, and should not be used in
+// production.  No guarantee of future compatibility is made or implied if you
+// use PROC_CMDLINE for anything other than unit testing.  If the environment
+// variable and the file /proc/cmdline are both unreadable, call log.Fatal and
+// exit.
+func MustReadProcCmdline() string {
 	if text, isPresent := os.LookupEnv("PROC_CMDLINE"); isPresent {
-		return text, nil
+		return text
 	}
 	procCmdline, err := ioutil.ReadFile("/proc/cmdline")
-	if err != nil {
-		return "", err
-	}
-	return string(procCmdline), nil
+	r.Must(err, "Could not read /proc/cmdline")
+	return string(procCmdline)
 }
 
 // ReadIndexFromJSON unmarshals JSON input to read the index argument contained therein.
@@ -150,29 +151,16 @@ func ReadIndexFromJSON(r io.Reader) (int64, error) {
 
 // Put it all together.
 func main() {
-	procCmdline, err := ReadProcCmdline()
-	if err != nil {
-		log.Fatal("Could not read /proc/cmdline: ", err)
-	}
+	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
-	if err != nil {
-		log.Fatal("Could not populate the IP configuration: ", err)
-	}
+	r.Must(err, "Could not populate the IP configuration")
 	index, err := ReadIndexFromJSON(os.Stdin)
 	if err != nil {
 		// Fallback to deprecated method.
 		index, err = DiscoverIndex()
-		if err != nil {
-			log.Fatal("Could not discover the index :", err)
-		}
+		r.Must(err, "Could not discover the index")
 	}
-	err = AddIndexToIP(config, index)
-	if err != nil {
-		log.Fatal("Could not manipulate the IP: ", err)
-	}
+	r.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
-	err = encoder.Encode(config)
-	if err != nil {
-		log.Fatal("Could not serialize the struct: ", err)
-	}
+	r.Must(encoder.Encode(config), "Could not serialize the struct")
 }
