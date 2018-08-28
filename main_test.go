@@ -128,9 +128,9 @@ func TestAddIndexToIP(t *testing.T) {
 	}
 }
 
-func TestReadProcCmdlineOrEnv(t *testing.T) {
+func TestMustReadProcCmdlineOrEnv(t *testing.T) {
 	if _, isPresent := os.LookupEnv("PROC_CMDLINE"); isPresent {
-		log.Println("Can't test ReadProcCmdline because PROC_CMDLINE is set")
+		log.Println("Can't test MustReadProcCmdline because PROC_CMDLINE is set")
 		return
 	}
 	cmdlineBytes, err := ioutil.ReadFile("/proc/cmdline")
@@ -139,16 +139,16 @@ func TestReadProcCmdlineOrEnv(t *testing.T) {
 		return
 	}
 	cmdline := string(cmdlineBytes)
-	output, err := ReadProcCmdline()
-	if err != nil || output != cmdline {
-		t.Errorf("Bad output from ReadProcCmdline err(%s) '%s' != '%s'", err, output, cmdline)
+	output := MustReadProcCmdline()
+	if output != cmdline {
+		t.Errorf("Bad output from MustReadProcCmdline err(%s) '%s' != '%s'", err, output, cmdline)
 	}
 	os.Setenv("PROC_CMDLINE", "testvalue")
-	output, err = ReadProcCmdline()
-	if err != nil || output != "testvalue" {
-		t.Errorf("Bad output from ReadProcCmdline err(%s) '%s' != '%s'", err, output, "testvalue")
+	defer os.Unsetenv("PROC_CMDLINE")
+	output = MustReadProcCmdline()
+	if output != "testvalue" {
+		t.Errorf("Bad output from MustReadProcCmdline err(%s) '%s' != '%s'", err, output, "testvalue")
 	}
-	os.Unsetenv("PROC_CMDLINE")
 }
 
 func TestConfigStructure(t *testing.T) {
