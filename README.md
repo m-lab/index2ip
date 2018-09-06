@@ -30,4 +30,6 @@ that depends on your particular config, you should make a JSON snippet like:
 
 ## In the name of the pod
 
-If the pod name contains a string of the form `index[0-9]+` (for example `ndt-index12-111234-aa3b1`) then the 
+If the pod name contains a string of the form `index[0-9]+` (for example 
+`ndt-index12-111234-aa3b1`) then the increment will be set equal to the integer
+following the `index` substring (12 in this example).
