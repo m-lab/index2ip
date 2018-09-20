@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	r "github.com/m-lab/go/runtimeext"
+	"github.com/m-lab/go/rtx"
 )
 
 // Configuration objects to hold the CNI config that must be marshalled into Stdout
@@ -126,7 +126,7 @@ func MustReadProcCmdline() string {
 		return text
 	}
 	procCmdline, err := ioutil.ReadFile("/proc/cmdline")
-	r.Must(err, "Could not read /proc/cmdline")
+	rtx.Must(err, "Could not read /proc/cmdline")
 	return string(procCmdline)
 }
 
@@ -153,14 +153,14 @@ func ReadIndexFromJSON(r io.Reader) (int64, error) {
 func main() {
 	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
-	r.Must(err, "Could not populate the IP configuration")
+	rtx.Must(err, "Could not populate the IP configuration")
 	index, err := ReadIndexFromJSON(os.Stdin)
 	if err != nil {
 		// Fallback to deprecated method.
 		index, err = DiscoverIndex()
-		r.Must(err, "Could not discover the index")
+		rtx.Must(err, "Could not discover the index")
 	}
-	r.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
+	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
-	r.Must(encoder.Encode(config), "Could not serialize the struct")
+	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
 }
