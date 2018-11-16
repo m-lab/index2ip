@@ -28,8 +28,25 @@ func TestMakeIPConfig(t *testing.T) {
 	}
 	_, has8 := nameservers["8.8.8.8"]
 	_, has4 := nameservers["8.8.4.4"]
-	if len(nameservers) != 2 || !has8 || !has4 {
+	_, hasv6a := nameservers["2001:4860:4860::8888"]
+	_, hasv6b := nameservers["2001:4860:4860::8844"]
+	if len(nameservers) != 4 || !has8 || !has4 || !hasv6a || !hasv6b {
 		t.Error("Bad list of nameservers:", config.DNS.Nameservers)
+	}
+}
+
+func TestMakeIPConfigV4Only(t *testing.T) {
+	procCmdline := "rootflags=rw mount.usrflags=ro epoxy.ip=4.14.159.112::4.14.159.65:255.255.255.192:mlab4.lga0t.measurement-lab.org:eth0:off:8.8.8.8:8.8.4.4 epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.interface=eth0 epoxy.hostname=mlab4.lga0t.measurement-lab.org epoxy.stage3=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/4WT11StThCp5AUHOYU0RJmpDE7g/stage3 epoxy.report=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/fK8SBsveTTf7kv90RNkfM6FLfmo/report epoxy.allocate_k8s_token=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/wDBfLAQlFu37jEsHsCNT40UrIk8/extension/allocate_k8s_token epoxy.server=boot-api-dot-mlab-sandbox.appspot.com epoxy.project=mlab-sandbox net.ifnames=0 coreos.autologin=tty1"
+	config, err := MakeIPConfig(procCmdline)
+	if err != nil || config.IPv6 != nil {
+		t.Error("No ipv6 info should mean no ipv6 config")
+	}
+}
+
+func TestMakeGenericIPConfig(t *testing.T) {
+	_, _, err := MakeGenericIPConfig("", "v5")
+	if err == nil {
+		t.Error("IPv5 should be an error")
 	}
 }
 
@@ -37,6 +54,7 @@ func TestMakeIPConfigFails(t *testing.T) {
 	badProcCmdline := []string{
 		"a bad value",
 		"epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8",
+		"epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.ipv6=2001:1900:2100:2d::112/64,2001:1900:2100:2d::1,2001:4860:4860::8888",
 	}
 	for _, bad := range badProcCmdline {
 		config, err := MakeIPConfig(bad)
@@ -82,48 +100,70 @@ func TestDiscoverIndex(t *testing.T) {
 
 func TestAddIndexToIP(t *testing.T) {
 	type AddIndexTestCase struct {
-		ip     string
-		index  int64
-		answer string
+		ip4     string
+		ip6     string
+		index   int64
+		answer4 string
+		answer6 string
 	}
 	goodInputPairs := []AddIndexTestCase{
-		{"1.2.3.4/26", 1, "1.2.3.5/26"},
-		{"1.2.3.4/26", 2, "1.2.3.6/26"},
-		{"1.2.3.4/26", 3, "1.2.3.7/26"},
-		{"1.2.3.4/26", 4, "1.2.3.8/26"},
-		{"1.2.3.4/26", 5, "1.2.3.9/26"},
-		{"1.2.3.4/26", 6, "1.2.3.10/26"},
-		{"1.2.3.4/26", 7, "1.2.3.11/26"},
-		{"1.2.3.4/26", 8, "1.2.3.12/26"},
+		{"1.2.3.4/26", "", 1, "1.2.3.5/26", ""},
+		{"1.2.3.4/26", "", 2, "1.2.3.6/26", ""},
+		{"1.2.3.4/26", "", 3, "1.2.3.7/26", ""},
+		{"1.2.3.4/26", "", 4, "1.2.3.8/26", ""},
+		{"1.2.3.4/26", "", 5, "1.2.3.9/26", ""},
+		{"1.2.3.4/26", "1:2::/26", 6, "1.2.3.10/26", "1:2::6/26"},
+		{"1.2.3.4/26", "", 7, "1.2.3.11/26", ""},
+		{"1.2.3.4/26", "", 8, "1.2.3.12/26", ""},
+		{"1.2.3.4/26", "", 9, "1.2.3.13/26", ""},
+		{"1.2.3.4/26", "1:2::/26", 10, "1.2.3.14/26", "1:2::10/26"},
+		{"1.2.3.4/26", "", 11, "1.2.3.15/26", ""},
+		{"1.2.3.4/26", "", 12, "1.2.3.16/26", ""},
 	}
 	for _, testCase := range goodInputPairs {
 		config := &CniConfig{
 			IPv4: &IPConfig{
-				IP: testCase.ip,
+				IP: testCase.ip4,
 			},
+		}
+		if testCase.ip6 != "" {
+			config.IPv6 = &IPConfig{
+				IP: testCase.ip6,
+			}
 		}
 		err := AddIndexToIP(config, testCase.index)
 		if err != nil {
 			t.Error("Could not AddIndexToIP:", err)
 			continue
 		}
-		if config.IPv4.IP != testCase.answer {
-			t.Errorf("%s + %d should be %s but was %s", testCase.ip, testCase.index, testCase.answer, config.IPv4.IP)
+		if config.IPv4.IP != testCase.answer4 {
+			t.Errorf("%s + %d should be %s but was %s", testCase.ip4, testCase.index, testCase.answer4, config.IPv4.IP)
+		}
+		if config.IPv6 != nil && config.IPv6.IP != testCase.answer6 {
+			t.Errorf("%s + %d should be %s but was %s", testCase.ip6, testCase.index, testCase.answer6, config.IPv6.IP)
 		}
 	}
 	badInputPairs := []AddIndexTestCase{
-		{"1.c.3.4/26", 8, ""},
-		{"1.2.3.4/26", 254, ""},
+		{"1.c.3.4/26", "", 8, "", ""},
+		{"1.2.3.4/26", "", 254, "", ""},
+		{"1.2.3.4/26", "1:Z::/26", 6, "", ""},
+		{"1.2.3.4/26", "1:2::", 6, "", ""},
+		{"1.2.3.4/26", "1:2::FE/26", 6, "", ""},
 	}
 	for _, testCase := range badInputPairs {
 		config := &CniConfig{
 			IPv4: &IPConfig{
-				IP: testCase.ip,
+				IP: testCase.ip4,
 			},
+		}
+		if testCase.ip6 != "" {
+			config.IPv6 = &IPConfig{
+				IP: testCase.ip6,
+			}
 		}
 		err := AddIndexToIP(config, testCase.index)
 		if err == nil {
-			t.Error("AddIndexToIp should have failed")
+			t.Errorf("AddIndexToIp should have failed on %v", testCase)
 		}
 	}
 }

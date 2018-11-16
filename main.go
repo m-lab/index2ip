@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -47,41 +48,87 @@ type CniConfig struct {
 	DNS        *DNSConfig `json:"dns,omitempty"`
 }
 
+// IPaf represents the IP address family.
+type IPaf string
+
+const (
+	v4 IPaf = "v4"
+	v6 IPaf = "v6"
+)
+
+// ErrNoIPv6 is returned when we attempt to configure IPv6 on a system which has no v6 address.
+var ErrNoIPv6 = errors.New("IPv6 is not supported or configured")
+
+// MakeGenericIPConfig makes IPConfig and DNSConfig objects out of the epoxy command line.
+func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfig, error) {
+	var destination string
+	switch version {
+	case v4:
+		destination = "0.0.0.0/0"
+	case v6:
+		destination = "::/0"
+	default:
+		return nil, nil, errors.New("IP version can only be v4 or v6")
+	}
+	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
+	ipargsRe := regexp.MustCompile("epoxy.ip" + string(version) + "=([^ ]*)")
+	matches := ipargsRe.FindStringSubmatch(procCmdline)
+	if len(matches) < 2 {
+		if version == v6 {
+			return nil, nil, ErrNoIPv6
+		}
+		return nil, nil, fmt.Errorf("Could not find epoxy.ip" + string(version) + " args")
+	}
+	// Example substring: 4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
+	config := strings.Split(matches[1], ",")
+	if len(config) != 4 {
+		return nil, nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
+	}
+
+	IP := &IPConfig{
+		IP:      config[0],
+		Gateway: config[1],
+		Routes: []RouteConfig{
+			{Destination: destination},
+		},
+	}
+	DNS := &DNSConfig{Nameservers: []string{config[2], config[3]}}
+	return IP, DNS, nil
+}
+
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
 	config := &CniConfig{CniVersion: "0.2.0"}
 
-	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
-	ipv4argsRe := regexp.MustCompile("epoxy.ipv4=([^ ]*)")
-	matches := ipv4argsRe.FindStringSubmatch(procCmdline)
-	if len(matches) < 2 {
-		return nil, errors.New("Could not find epoxy.ipv4 args")
+	ipv4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
+	if err != nil {
+		// v4 config is required. Return an error if it is not present.
+		return nil, err
 	}
-	// Example substring: 4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
-	v4Config := strings.Split(matches[1], ",")
-	if len(v4Config) != 4 {
-		return nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
-	}
+	config.IPv4 = ipv4
+	config.DNS = dnsv4
 
-	config.IPv4 = &IPConfig{
-		IP:      v4Config[0],
-		Gateway: v4Config[1],
-		Routes: []RouteConfig{
-			{Destination: "0.0.0.0/0"},
-		},
+	ipv6, dnsv6, err := MakeGenericIPConfig(procCmdline, v6)
+	switch err {
+	case nil:
+		// v6 config is optional. Only set it up if the error is nil.
+		config.IPv6 = ipv6
+		for _, server := range dnsv6.Nameservers {
+			config.DNS.Nameservers = append(config.DNS.Nameservers, server)
+		}
+	case ErrNoIPv6:
+		// Do nothing, but also don't return an error
+	default:
+		return nil, err
 	}
-	config.DNS = &DNSConfig{Nameservers: []string{v4Config[2], v4Config[3]}}
-
-	// TODO: Populate the config.Ip6 entry if possible.
 	return config, nil
 }
 
-// DiscoverIndex figures out what index this pod has.
+// DiscoverIndex figures out what index this pod has. The method this uses to
+// discover the index is deprecated. We should be using kubernetes annotations
+// or putting the index in the network config. This uses bad name-munging hacks.
 func DiscoverIndex() (int64, error) {
-	// The method this uses to discover the index comes pre-deprecated. We
-	// should be using kubernetes annotations. Instead we are using bad
-	// name-munging hacks.
 	// TODO: Fix this to use k8s annotations.
 
 	// Example CNI_ARGS: "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b"
@@ -101,7 +148,7 @@ func DiscoverIndex() (int64, error) {
 
 // AddIndexToIP updates the config in light of the discovered index.
 func AddIndexToIP(config *CniConfig, index int64) error {
-	// TODO: Add v6 support
+	// Add the index to the IPv4 address.
 	var a, b, c, d, subnet int64
 	_, err := fmt.Sscanf(config.IPv4.IP, "%d.%d.%d.%d/%d", &a, &b, &c, &d, &subnet)
 	if err != nil {
@@ -111,6 +158,31 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		return errors.New("Index out of range for address")
 	}
 	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
+	// Add the index to the IPv6 address, if it exists.
+	if config.IPv6 != nil {
+		// Due to operator preference, and to aid operators in debugging, we make the
+		// last v6 octect, when rendered in hexadecimal, be the same as the last v4
+		// octet when it is rendered in decimal. This is arguably dumb, but it is
+		// really handy for visually mathing up v4 and v6 services, and it continues
+		// existing practice.
+		v6Index, _ := strconv.ParseInt(strconv.FormatInt(index, 10), 16, 64) // Ignore the error - all base 10 number strings are valid base 16 number strings.
+		addrSubnet := strings.Split(config.IPv6.IP, "/")
+		if len(addrSubnet) != 2 {
+			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.IPv6.IP)
+		}
+		ipv6 := net.ParseIP(addrSubnet[0])
+		if ipv6 == nil {
+			return fmt.Errorf("Cloud not parse IPv6 address %v", addrSubnet[0])
+		}
+		ipv6 = ipv6.To16()
+		var lastoctet int64
+		lastoctet = int64(ipv6[15])
+		if lastoctet+v6Index > 255 || v6Index < 0 {
+			return errors.New("Index out of range for IPv6 address")
+		}
+		ipv6[15] = byte(lastoctet + v6Index)
+		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
+	}
 	return nil
 }
 
