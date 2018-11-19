@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"regexp"
 	"strconv"
@@ -47,41 +48,87 @@ type CniConfig struct {
 	DNS        *DNSConfig `json:"dns,omitempty"`
 }
 
+// IPaf represents the IP address family.
+type IPaf string
+
+const (
+	v4 IPaf = "v4"
+	v6 IPaf = "v6"
+)
+
+// ErrNoIPv6 is returned when we attempt to configure IPv6 on a system which has no v6 address.
+var ErrNoIPv6 = errors.New("IPv6 is not supported or configured")
+
+// MakeGenericIPConfig makes IPConfig and DNSConfig objects out of the epoxy command line.
+func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfig, error) {
+	var destination string
+	switch version {
+	case v4:
+		destination = "0.0.0.0/0"
+	case v6:
+		destination = "::/0"
+	default:
+		return nil, nil, errors.New("IP version can only be v4 or v6")
+	}
+	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
+	ipargsRe := regexp.MustCompile("epoxy.ip" + string(version) + "=([^ ]+)")
+	matches := ipargsRe.FindStringSubmatch(procCmdline)
+	if len(matches) < 2 {
+		if version == v6 {
+			return nil, nil, ErrNoIPv6
+		}
+		return nil, nil, fmt.Errorf("Could not find epoxy.ip" + string(version) + " args")
+	}
+	// Example substring: 4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
+	config := strings.Split(matches[1], ",")
+	if len(config) != 4 {
+		return nil, nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
+	}
+
+	IP := &IPConfig{
+		IP:      config[0],
+		Gateway: config[1],
+		Routes: []RouteConfig{
+			{Destination: destination},
+		},
+	}
+	DNS := &DNSConfig{Nameservers: []string{config[2], config[3]}}
+	return IP, DNS, nil
+}
+
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
 	config := &CniConfig{CniVersion: "0.2.0"}
 
-	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
-	ipv4argsRe := regexp.MustCompile("epoxy.ipv4=([^ ]*)")
-	matches := ipv4argsRe.FindStringSubmatch(procCmdline)
-	if len(matches) < 2 {
-		return nil, errors.New("Could not find epoxy.ipv4 args")
+	ipv4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
+	if err != nil {
+		// v4 config is required. Return an error if it is not present.
+		return nil, err
 	}
-	// Example substring: 4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
-	v4Config := strings.Split(matches[1], ",")
-	if len(v4Config) != 4 {
-		return nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
-	}
+	config.IPv4 = ipv4
+	config.DNS = dnsv4
 
-	config.IPv4 = &IPConfig{
-		IP:      v4Config[0],
-		Gateway: v4Config[1],
-		Routes: []RouteConfig{
-			{Destination: "0.0.0.0/0"},
-		},
+	ipv6, dnsv6, err := MakeGenericIPConfig(procCmdline, v6)
+	switch err {
+	case nil:
+		// v6 config is optional. Only set it up if the error is nil.
+		config.IPv6 = ipv6
+		for _, server := range dnsv6.Nameservers {
+			config.DNS.Nameservers = append(config.DNS.Nameservers, server)
+		}
+	case ErrNoIPv6:
+		// Do nothing, but also don't return an error
+	default:
+		return nil, err
 	}
-	config.DNS = &DNSConfig{Nameservers: []string{v4Config[2], v4Config[3]}}
-
-	// TODO: Populate the config.Ip6 entry if possible.
 	return config, nil
 }
 
-// DiscoverIndex figures out what index this pod has.
+// DiscoverIndex figures out what index this pod has. The method this uses to
+// discover the index is deprecated. We should be using kubernetes annotations
+// or putting the index in the network config. This uses bad name-munging hacks.
 func DiscoverIndex() (int64, error) {
-	// The method this uses to discover the index comes pre-deprecated. We
-	// should be using kubernetes annotations. Instead we are using bad
-	// name-munging hacks.
 	// TODO: Fix this to use k8s annotations.
 
 	// Example CNI_ARGS: "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b"
@@ -101,7 +148,7 @@ func DiscoverIndex() (int64, error) {
 
 // AddIndexToIP updates the config in light of the discovered index.
 func AddIndexToIP(config *CniConfig, index int64) error {
-	// TODO: Add v6 support
+	// Add the index to the IPv4 address.
 	var a, b, c, d, subnet int64
 	_, err := fmt.Sscanf(config.IPv4.IP, "%d.%d.%d.%d/%d", &a, &b, &c, &d, &subnet)
 	if err != nil {
@@ -111,18 +158,41 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		return errors.New("Index out of range for address")
 	}
 	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
+	// Add the index to the IPv6 address, if it exists.
+	if config.IPv6 != nil {
+		addrSubnet := strings.Split(config.IPv6.IP, "/")
+		if len(addrSubnet) != 2 {
+			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.IPv6.IP)
+		}
+		ipv6 := net.ParseIP(addrSubnet[0])
+		if ipv6 == nil {
+			return fmt.Errorf("Cloud not parse IPv6 address %v", addrSubnet[0])
+		}
+		// Ensure that the byte array is 16 bytes. According to the "net" API docs,
+		// the byte array length and the IP address family are purposely decoupled. To
+		// ensure a 16 byte array as the underlying storage (which is what we need) we
+		// call To16() which has the job of ensuring 16 bytes of storage backing.
+		ipv6 = ipv6.To16()
+		var lastoctet int64
+		lastoctet = int64(ipv6[15])
+		if lastoctet+index > 255 || index < 0 {
+			return errors.New("Index out of range for IPv6 address")
+		}
+		ipv6[15] = byte(lastoctet + index)
+		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
+	}
 	return nil
 }
 
 // MustReadProcCmdline reads /proc/cmdline or (if present) the environment
-// variable PROC_CMDLINE (to aid in testing).  The PROC_CMDLINE environment
+// variable PROC_CMDLINE_FOR_TESTING. The PROC_CMDLINE_FOR_TESTING environment
 // variable should only be used for unit testing, and should not be used in
-// production.  No guarantee of future compatibility is made or implied if you
-// use PROC_CMDLINE for anything other than unit testing.  If the environment
-// variable and the file /proc/cmdline are both unreadable, call log.Fatal and
-// exit.
+// production. No guarantee of future compatibility is made or implied if you
+// use PROC_CMDLINE_FOR_TESTING for anything other than unit testing. If the
+// environment variable and the file /proc/cmdline are both unreadable, call
+// log.Fatal and exit.
 func MustReadProcCmdline() string {
-	if text, isPresent := os.LookupEnv("PROC_CMDLINE"); isPresent {
+	if text, isPresent := os.LookupEnv("PROC_CMDLINE_FOR_TESTING"); isPresent {
 		return text
 	}
 	procCmdline, err := ioutil.ReadFile("/proc/cmdline")
