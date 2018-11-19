@@ -17,14 +17,14 @@ import (
 func TestMakeIPConfig(t *testing.T) {
 	procCmdline := "rootflags=rw mount.usrflags=ro epoxy.ip=4.14.159.112::4.14.159.65:255.255.255.192:mlab4.lga0t.measurement-lab.org:eth0:off:8.8.8.8:8.8.4.4 epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.ipv6=2001:1900:2100:2d::112/64,2001:1900:2100:2d::1,2001:4860:4860::8888,2001:4860:4860::8844 epoxy.interface=eth0 epoxy.hostname=mlab4.lga0t.measurement-lab.org epoxy.stage3=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/4WT11StThCp5AUHOYU0RJmpDE7g/stage3 epoxy.report=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/fK8SBsveTTf7kv90RNkfM6FLfmo/report epoxy.allocate_k8s_token=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/wDBfLAQlFu37jEsHsCNT40UrIk8/extension/allocate_k8s_token epoxy.server=boot-api-dot-mlab-sandbox.appspot.com epoxy.project=mlab-sandbox net.ifnames=0 coreos.autologin=tty1"
 	config, _ := MakeIPConfig(procCmdline)
-	if config.CniVersion != "0.2.0" {
+	if config.CniVersion != "0.3.1" {
 		t.Error("Wrong CNI version:", config.CniVersion)
 	}
-	if config.IPv4.IP != "4.14.159.112/26" {
-		t.Error("Wrong V4 address:", config.IPv4.IP)
+	if config.IPs[0].IP != "4.14.159.112/26" {
+		t.Error("Wrong V4 address:", config.IPs[0].IP)
 	}
-	if config.IPv4.Gateway != "4.14.159.65" {
-		t.Error("Wrong gateway:", config.IPv4.Gateway)
+	if config.IPs[0].Gateway != "4.14.159.65" {
+		t.Error("Wrong gateway:", config.IPs[0].Gateway)
 	}
 	nameservers := map[string]bool{}
 	for _, ns := range config.DNS.Nameservers {
@@ -42,13 +42,13 @@ func TestMakeIPConfig(t *testing.T) {
 func TestMakeIPConfigV4Only(t *testing.T) {
 	procCmdline := "rootflags=rw mount.usrflags=ro epoxy.ip=4.14.159.112::4.14.159.65:255.255.255.192:mlab4.lga0t.measurement-lab.org:eth0:off:8.8.8.8:8.8.4.4 epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.ip6= epoxy.interface=eth0 epoxy.hostname=mlab4.lga0t.measurement-lab.org epoxy.stage3=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/4WT11StThCp5AUHOYU0RJmpDE7g/stage3 epoxy.report=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/fK8SBsveTTf7kv90RNkfM6FLfmo/report epoxy.allocate_k8s_token=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/wDBfLAQlFu37jEsHsCNT40UrIk8/extension/allocate_k8s_token epoxy.server=boot-api-dot-mlab-sandbox.appspot.com epoxy.project=mlab-sandbox net.ifnames=0 coreos.autologin=tty1"
 	config, err := MakeIPConfig(procCmdline)
-	if err != nil || config.IPv6 != nil {
+	if err != nil || len(config.IPs) != 1 {
 		t.Error("No ipv6 info should mean no ipv6 config")
 	}
 }
 
 func TestMakeGenericIPConfig(t *testing.T) {
-	_, _, err := MakeGenericIPConfig("", "v5")
+	_, _, _, err := MakeGenericIPConfig("", "v5")
 	if err == nil {
 		t.Error("IPv5 should be an error")
 	}
@@ -104,25 +104,33 @@ func TestAddIndexToIP(t *testing.T) {
 	}
 	for _, testCase := range goodInputPairs {
 		config := &CniConfig{
-			IPv4: &IPConfig{
-				IP: testCase.ip4,
+			IPs: []*IPConfig{
+				{
+					Version: v4,
+					IP:      testCase.ip4,
+				},
 			},
 		}
 		if testCase.ip6 != "" {
-			config.IPv6 = &IPConfig{
-				IP: testCase.ip6,
-			}
+			config.IPs = append(config.IPs, &IPConfig{
+				Version: v6,
+				IP:      testCase.ip6,
+			})
 		}
-		err := AddIndexToIP(config, testCase.index)
+		err := AddIndexToIPs(config, testCase.index)
 		if err != nil {
 			t.Error("Could not AddIndexToIP:", err)
 			continue
 		}
-		if config.IPv4.IP != testCase.answer4 {
-			t.Errorf("%s + %d should be %s but was %s", testCase.ip4, testCase.index, testCase.answer4, config.IPv4.IP)
+		if len(config.IPs) == 0 {
+			t.Errorf("No IP address produced when making %v", config)
+			continue
 		}
-		if config.IPv6 != nil && config.IPv6.IP != testCase.answer6 {
-			t.Errorf("%s + %d should be %s but was %s", testCase.ip6, testCase.index, testCase.answer6, config.IPv6.IP)
+		if config.IPs[0].IP != testCase.answer4 {
+			t.Errorf("%s + %d should be %s but was %s", testCase.ip4, testCase.index, testCase.answer4, config.IPs[0].IP)
+		}
+		if len(config.IPs) == 2 && config.IPs[1].IP != testCase.answer6 {
+			t.Errorf("%s + %d should be %s but was %s", testCase.ip6, testCase.index, testCase.answer6, config.IPs[1].IP)
 		}
 	}
 	badInputPairs := []AddIndexTestCase{
@@ -134,16 +142,19 @@ func TestAddIndexToIP(t *testing.T) {
 	}
 	for _, testCase := range badInputPairs {
 		config := &CniConfig{
-			IPv4: &IPConfig{
-				IP: testCase.ip4,
+			IPs: []*IPConfig{
+				{
+					Version: v4,
+					IP:      testCase.ip4,
+				},
 			},
 		}
 		if testCase.ip6 != "" {
-			config.IPv6 = &IPConfig{
+			config.IPs = append(config.IPs, &IPConfig{
 				IP: testCase.ip6,
-			}
+			})
 		}
-		err := AddIndexToIP(config, testCase.index)
+		err := AddIndexToIPs(config, testCase.index)
 		if err == nil {
 			t.Errorf("AddIndexToIp should have failed on %v", testCase)
 		}
