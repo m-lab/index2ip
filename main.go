@@ -25,9 +25,9 @@ import (
 
 // IPConfig holds the IP configuration. The elements are strings to support v4 or v6.
 type IPConfig struct {
-	IP      string        `json:"ip"`
-	Gateway string        `json:"gateway"`
-	Routes  []RouteConfig `json:"routes"`
+	Version IPaf   `json:"version"`
+	IP      string `json:"ip"`
+	Gateway string `json:"gateway"`
 }
 
 // RouteConfig holds the subnets for which an interface should receive packets.
@@ -42,25 +42,25 @@ type DNSConfig struct {
 
 // CniConfig holds a complete CNI configuration, including the protocol version.
 type CniConfig struct {
-	CniVersion string     `json:"cniVersion"`
-	IPv4       *IPConfig  `json:"ip4,omitempty"`
-	IPv6       *IPConfig  `json:"ip6,omitempty"`
-	DNS        *DNSConfig `json:"dns,omitempty"`
+	CniVersion string         `json:"cniVersion"`
+	IPs        []*IPConfig    `json:"ips,omitempty"`
+	Routes     []*RouteConfig `json:"routes,omitempty"`
+	DNS        *DNSConfig     `json:"dns,omitempty"`
 }
 
 // IPaf represents the IP address family.
 type IPaf string
 
 const (
-	v4 IPaf = "v4"
-	v6 IPaf = "v6"
+	v4 IPaf = "4"
+	v6 IPaf = "6"
 )
 
 // ErrNoIPv6 is returned when we attempt to configure IPv6 on a system which has no v6 address.
 var ErrNoIPv6 = errors.New("IPv6 is not supported or configured")
 
 // MakeGenericIPConfig makes IPConfig and DNSConfig objects out of the epoxy command line.
-func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfig, error) {
+func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *RouteConfig, *DNSConfig, error) {
 	var destination string
 	switch version {
 	case v4:
@@ -68,52 +68,53 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfi
 	case v6:
 		destination = "::/0"
 	default:
-		return nil, nil, errors.New("IP version can only be v4 or v6")
+		return nil, nil, nil, errors.New("IP version can only be v4 or v6")
 	}
 	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
-	ipargsRe := regexp.MustCompile("epoxy.ip" + string(version) + "=([^ ]+)")
+	ipargsRe := regexp.MustCompile("epoxy.ipv" + string(version) + "=([^ ]+)")
 	matches := ipargsRe.FindStringSubmatch(procCmdline)
 	if len(matches) < 2 {
 		if version == v6 {
-			return nil, nil, ErrNoIPv6
+			return nil, nil, nil, ErrNoIPv6
 		}
-		return nil, nil, fmt.Errorf("Could not find epoxy.ip" + string(version) + " args")
+		return nil, nil, nil, fmt.Errorf("Could not find epoxy.ip" + string(version) + " args")
 	}
 	// Example substring: 4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
 	config := strings.Split(matches[1], ",")
 	if len(config) != 4 {
-		return nil, nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
+		return nil, nil, nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
 	}
 
+	Route := &RouteConfig{Destination: destination}
 	IP := &IPConfig{
+		Version: version,
 		IP:      config[0],
 		Gateway: config[1],
-		Routes: []RouteConfig{
-			{Destination: destination},
-		},
 	}
 	DNS := &DNSConfig{Nameservers: []string{config[2], config[3]}}
-	return IP, DNS, nil
+	return IP, Route, DNS, nil
 }
 
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
-	config := &CniConfig{CniVersion: "0.2.0"}
+	config := &CniConfig{CniVersion: "0.3.1"}
 
-	ipv4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
+	ipv4, route4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
 	if err != nil {
 		// v4 config is required. Return an error if it is not present.
 		return nil, err
 	}
-	config.IPv4 = ipv4
+	config.IPs = append(config.IPs, ipv4)
+	config.Routes = append(config.Routes, route4)
 	config.DNS = dnsv4
 
-	ipv6, dnsv6, err := MakeGenericIPConfig(procCmdline, v6)
+	ipv6, route6, dnsv6, err := MakeGenericIPConfig(procCmdline, v6)
 	switch err {
 	case nil:
 		// v6 config is optional. Only set it up if the error is nil.
-		config.IPv6 = ipv6
+		config.IPs = append(config.IPs, ipv6)
+		config.Routes = append(config.Routes, route6)
 		for _, server := range dnsv6.Nameservers {
 			config.DNS.Nameservers = append(config.DNS.Nameservers, server)
 		}
@@ -146,23 +147,25 @@ func DiscoverIndex() (int64, error) {
 	return strconv.ParseInt(indexMatches[1], 10, 64)
 }
 
-// AddIndexToIP updates the config in light of the discovered index.
-func AddIndexToIP(config *CniConfig, index int64) error {
-	// Add the index to the IPv4 address.
-	var a, b, c, d, subnet int64
-	_, err := fmt.Sscanf(config.IPv4.IP, "%d.%d.%d.%d/%d", &a, &b, &c, &d, &subnet)
-	if err != nil {
-		return errors.New("Could not parse IPv4 address: " + config.IPv4.IP)
-	}
-	if d+index > 255 || index < 0 {
-		return errors.New("Index out of range for address")
-	}
-	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
-	// Add the index to the IPv6 address, if it exists.
-	if config.IPv6 != nil {
-		addrSubnet := strings.Split(config.IPv6.IP, "/")
+// AddIndexToIP updates a single IP in light of the discovered index.
+func AddIndexToIP(config *IPConfig, index int64) error {
+	switch config.Version {
+	case v4:
+		// Add the index to the IPv4 address.
+		var a, b, c, d, subnet int64
+		_, err := fmt.Sscanf(config.IP, "%d.%d.%d.%d/%d", &a, &b, &c, &d, &subnet)
+		if err != nil {
+			return errors.New("Could not parse IPv4 address: " + config.IP)
+		}
+		if d+index > 255 || index < 0 {
+			return errors.New("Index out of range for address")
+		}
+		config.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
+	case v6:
+		// Add the index to the IPv6 address.
+		addrSubnet := strings.Split(config.IP, "/")
 		if len(addrSubnet) != 2 {
-			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.IPv6.IP)
+			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.IP)
 		}
 		ipv6 := net.ParseIP(addrSubnet[0])
 		if ipv6 == nil {
@@ -179,7 +182,19 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 			return errors.New("Index out of range for IPv6 address")
 		}
 		ipv6[15] = byte(lastoctet + index)
-		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
+		config.IP = ipv6.String() + "/" + addrSubnet[1]
+	default:
+		return errors.New("Unknown IP version")
+	}
+	return nil
+}
+
+// AddIndexToIPs updates the config in light of the discovered index.
+func AddIndexToIPs(config *CniConfig, index int64) error {
+	for _, ip := range config.IPs {
+		if err := AddIndexToIP(ip, index); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -230,7 +245,7 @@ func main() {
 		index, err = DiscoverIndex()
 		rtx.Must(err, "Could not discover the index")
 	}
-	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
+	rtx.Must(AddIndexToIPs(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
 }
