@@ -169,13 +169,18 @@ func TestAddIndexToIP(t *testing.T) {
 		}
 		if testCase.ip6 != "" {
 			config.IPs = append(config.IPs, &IPConfig{
-				IP: testCase.ip6,
+				Version: v6,
+				IP:      testCase.ip6,
 			})
 		}
 		err := AddIndexToIPs(config, testCase.index)
 		if err == nil {
 			t.Errorf("AddIndexToIp should have failed on %v", testCase)
 		}
+	}
+	err := AddIndexToIP(&IPConfig{Version: "v5"}, 5)
+	if err == nil {
+		t.Error("AddIndexToIp should have failed on IPv5")
 	}
 }
 
