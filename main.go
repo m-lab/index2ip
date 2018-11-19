@@ -71,7 +71,7 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfi
 		return nil, nil, errors.New("IP version can only be v4 or v6")
 	}
 	// Example substring: epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4
-	ipargsRe := regexp.MustCompile("epoxy.ip" + string(version) + "=([^ ]*)")
+	ipargsRe := regexp.MustCompile("epoxy.ip" + string(version) + "=([^ ]+)")
 	matches := ipargsRe.FindStringSubmatch(procCmdline)
 	if len(matches) < 2 {
 		if version == v6 {
@@ -162,7 +162,7 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 	if config.IPv6 != nil {
 		// Due to operator preference, and to aid operators in debugging, we make the
 		// last v6 octect, when rendered in hexadecimal, be the same as the last v4
-		// octet when it is rendered in decimal. This is arguably dumb, but it is
+		// octet when it is rendered in decimal. This is a little silly, but it is
 		// really handy for visually mathing up v4 and v6 services, and it continues
 		// existing practice.
 		v6Index, _ := strconv.ParseInt(strconv.FormatInt(index, 10), 16, 64) // Ignore the error - all base 10 number strings are valid base 16 number strings.
@@ -174,6 +174,10 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		if ipv6 == nil {
 			return fmt.Errorf("Cloud not parse IPv6 address %v", addrSubnet[0])
 		}
+		// Ensure that the byte array is 16 bytes. According to the "net" API docs,
+		// the byte array length and the IP address family are purposely decoupled. To
+		// ensure a 16 byte array as the underlying storage (which is what we need) we
+		// call To16().
 		ipv6 = ipv6.To16()
 		var lastoctet int64
 		lastoctet = int64(ipv6[15])
@@ -187,14 +191,14 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 }
 
 // MustReadProcCmdline reads /proc/cmdline or (if present) the environment
-// variable PROC_CMDLINE (to aid in testing).  The PROC_CMDLINE environment
+// variable PROC_CMDLINE_FOR_TESTING. The PROC_CMDLINE_FOR_TESTING environment
 // variable should only be used for unit testing, and should not be used in
-// production.  No guarantee of future compatibility is made or implied if you
-// use PROC_CMDLINE for anything other than unit testing.  If the environment
-// variable and the file /proc/cmdline are both unreadable, call log.Fatal and
-// exit.
+// production. No guarantee of future compatibility is made or implied if you
+// use PROC_CMDLINE_FOR_TESTING for anything other than unit testing. If the
+// environment variable and the file /proc/cmdline are both unreadable, call
+// log.Fatal and exit.
 func MustReadProcCmdline() string {
-	if text, isPresent := os.LookupEnv("PROC_CMDLINE"); isPresent {
+	if text, isPresent := os.LookupEnv("PROC_CMDLINE_FOR_TESTING"); isPresent {
 		return text
 	}
 	procCmdline, err := ioutil.ReadFile("/proc/cmdline")
