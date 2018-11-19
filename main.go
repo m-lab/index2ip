@@ -160,12 +160,6 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
 	// Add the index to the IPv6 address, if it exists.
 	if config.IPv6 != nil {
-		// Due to operator preference, and to aid operators in debugging, we make the
-		// last v6 octect, when rendered in hexadecimal, be the same as the last v4
-		// octet when it is rendered in decimal. This is a little silly, but it is
-		// really handy for visually mathing up v4 and v6 services, and it continues
-		// existing practice.
-		v6Index, _ := strconv.ParseInt(strconv.FormatInt(index, 10), 16, 64) // Ignore the error - all base 10 number strings are valid base 16 number strings.
 		addrSubnet := strings.Split(config.IPv6.IP, "/")
 		if len(addrSubnet) != 2 {
 			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.IPv6.IP)
@@ -177,14 +171,14 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		// Ensure that the byte array is 16 bytes. According to the "net" API docs,
 		// the byte array length and the IP address family are purposely decoupled. To
 		// ensure a 16 byte array as the underlying storage (which is what we need) we
-		// call To16().
+		// call To16() which has the job of ensuring 16 bytes of storage backing.
 		ipv6 = ipv6.To16()
 		var lastoctet int64
 		lastoctet = int64(ipv6[15])
-		if lastoctet+v6Index > 255 || v6Index < 0 {
+		if lastoctet+index > 255 || index < 0 {
 			return errors.New("Index out of range for IPv6 address")
 		}
-		ipv6[15] = byte(lastoctet + v6Index)
+		ipv6[15] = byte(lastoctet + index)
 		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
 	}
 	return nil
