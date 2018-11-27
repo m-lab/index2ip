@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/m-lab/go/osx"
 )
 
 func TestMakeIPConfig(t *testing.T) {
@@ -72,7 +74,8 @@ func failToDiscoverIndex(t *testing.T) {
 }
 
 func TestDiscoverIndex(t *testing.T) {
-	os.Setenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
+	revert := osx.MustSetenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
+	defer revert()
 	index, err := DiscoverIndex()
 	if err != nil || index != 4 {
 		t.Error("Could not discover index")
@@ -183,8 +186,8 @@ func TestMustReadProcCmdlineOrEnv(t *testing.T) {
 	if output != cmdline {
 		t.Errorf("Bad output from MustReadProcCmdline err(%s) '%s' != '%s'", err, output, cmdline)
 	}
-	os.Setenv("PROC_CMDLINE_FOR_TESTING", "testvalue")
-	defer os.Unsetenv("PROC_CMDLINE_FOR_TESTING")
+	revert := osx.MustSetenv("PROC_CMDLINE_FOR_TESTING", "testvalue")
+	defer revert()
 	output = MustReadProcCmdline()
 	if output != "testvalue" {
 		t.Errorf("Bad output from MustReadProcCmdline err(%s) '%s' != '%s'", err, output, "testvalue")
@@ -253,9 +256,11 @@ func TestEndToEnd(t *testing.T) {
 		return
 	}
 	// An actual /proc/cmdline taken from mlab4.lga0t
-	os.Setenv("PROC_CMDLINE_FOR_TESTING", "rootflags=rw mount.usrflags=ro epoxy.ip=4.14.159.112::4.14.159.65:255.255.255.192:mlab4.lga0t.measurement-lab.org:eth0:off:8.8.8.8:8.8.4.4 epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.ipv6=2001:1900:2100:2d::112/64,2001:1900:2100:2d::1,2001:4860:4860::8888,2001:4860:4860::8844 epoxy.interface=eth0 epoxy.hostname=mlab4.lga0t.measurement-lab.org epoxy.stage3=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/4WT11StThCp5AUHOYU0RJmpDE7g/stage3 epoxy.report=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/fK8SBsveTTf7kv90RNkfM6FLfmo/report epoxy.allocate_k8s_token=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/wDBfLAQlFu37jEsHsCNT40UrIk8/extension/allocate_k8s_token epoxy.server=boot-api-dot-mlab-sandbox.appspot.com epoxy.project=mlab-sandbox net.ifnames=0 coreos.autologin=tty1")
+	revertCmd := osx.MustSetenv("PROC_CMDLINE_FOR_TESTING", "rootflags=rw mount.usrflags=ro epoxy.ip=4.14.159.112::4.14.159.65:255.255.255.192:mlab4.lga0t.measurement-lab.org:eth0:off:8.8.8.8:8.8.4.4 epoxy.ipv4=4.14.159.112/26,4.14.159.65,8.8.8.8,8.8.4.4 epoxy.ipv6=2001:1900:2100:2d::112/64,2001:1900:2100:2d::1,2001:4860:4860::8888,2001:4860:4860::8844 epoxy.interface=eth0 epoxy.hostname=mlab4.lga0t.measurement-lab.org epoxy.stage3=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/4WT11StThCp5AUHOYU0RJmpDE7g/stage3 epoxy.report=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/fK8SBsveTTf7kv90RNkfM6FLfmo/report epoxy.allocate_k8s_token=https://boot-api-dot-mlab-sandbox.appspot.com/v1/boot/mlab4.lga0t.measurement-lab.org/wDBfLAQlFu37jEsHsCNT40UrIk8/extension/allocate_k8s_token epoxy.server=boot-api-dot-mlab-sandbox.appspot.com epoxy.project=mlab-sandbox net.ifnames=0 coreos.autologin=tty1")
+	defer revertCmd()
 	// Actual CNI_ARGS taken from a call to this plugin on that same server.
-	os.Setenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
+	revertCni := osx.MustSetenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
+	defer revertCni()
 
 	// The IP address in this test comes from the PROC_CMDLINE_FOR_TESTING environment variable.
 	if "4.14.159.116/26" != WithInputTestEndToEnd(t, "") {
@@ -265,10 +270,6 @@ func TestEndToEnd(t *testing.T) {
 	if "4.14.159.117/26" != WithInputTestEndToEnd(t, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`) {
 		t.Error("Wrong IP returned when index 5 was provided")
 	}
-
-	// Fix the surrounding environment.
-	os.Unsetenv("CNI_ARGS")
-	os.Unsetenv("PROC_CMDLINE_FOR_TESTING")
 }
 
 func WithInputTestEndToEnd(t *testing.T, input string) string {
