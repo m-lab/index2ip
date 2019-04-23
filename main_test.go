@@ -66,41 +66,6 @@ func TestMakeIPConfigFails(t *testing.T) {
 	}
 }
 
-func failToDiscoverIndex(t *testing.T) {
-	index, err := DiscoverIndex()
-	if err == nil || index > 0 {
-		t.Errorf("Failed to fail for '%s': err(%s), index(%d)", os.Getenv("CNI_ARGS"), err, index)
-	}
-}
-
-func TestDiscoverIndex(t *testing.T) {
-	revert := osx.MustSetenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
-	defer revert()
-	index, err := DiscoverIndex()
-	if err != nil || index != 4 {
-		t.Error("Could not discover index")
-	}
-
-	os.Setenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4-gmwz8;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
-	index, err = DiscoverIndex()
-	if err != nil || index != 4 {
-		t.Error("Could not discover index")
-	}
-
-	badArgs := []string{
-		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b",
-		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-ind4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b",
-		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b",
-		"IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b",
-	}
-	for _, bad := range badArgs {
-		os.Setenv("CNI_ARGS", bad)
-		failToDiscoverIndex(t)
-	}
-	os.Unsetenv("CNI_ARGS")
-	failToDiscoverIndex(t)
-}
-
 func TestAddIndexToIP(t *testing.T) {
 	type AddIndexTestCase struct {
 		ip4     string
@@ -262,10 +227,6 @@ func TestEndToEnd(t *testing.T) {
 	revertCni := osx.MustSetenv("CNI_ARGS", "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b")
 	defer revertCni()
 
-	// The IP address in this test comes from the PROC_CMDLINE_FOR_TESTING environment variable.
-	if "4.14.159.116/26" != WithInputTestEndToEnd(t, "") {
-		t.Error("Wrong IP returned when no input was provided")
-	}
 	// The IP address in this test should come from the parsed index on stdin.
 	if "4.14.159.117/26" != WithInputTestEndToEnd(t, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`) {
 		t.Error("Wrong IP returned when index 5 was provided")

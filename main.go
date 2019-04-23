@@ -125,27 +125,6 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	return config, nil
 }
 
-// DiscoverIndex figures out what index this pod has. The method this uses to
-// discover the index is deprecated. We should be using kubernetes annotations
-// or putting the index in the network config. This uses bad name-munging hacks.
-func DiscoverIndex() (int64, error) {
-	// TODO: Fix this to use k8s annotations.
-
-	// Example CNI_ARGS: "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b"
-	podNameRe := regexp.MustCompile(`\bK8S_POD_NAME=([^;]*)`)
-	podNameMatches := podNameRe.FindStringSubmatch(os.Getenv("CNI_ARGS"))
-	if len(podNameMatches) != 2 {
-		return -1, errors.New("Could not find pod name in " + os.Getenv("CNI_ARGS"))
-	}
-	podName := podNameMatches[1]
-	indexRe := regexp.MustCompile("index([0-9]+)")
-	indexMatches := indexRe.FindStringSubmatch(podName)
-	if len(indexMatches) != 2 {
-		return -1, errors.New("Could not find index in " + podName)
-	}
-	return strconv.ParseInt(indexMatches[1], 10, 64)
-}
-
 // AddIndexToIP updates the config in light of the discovered index.
 func AddIndexToIP(config *CniConfig, index int64) error {
 	// Add the index to the IPv4 address.
@@ -226,11 +205,7 @@ func main() {
 	config, err := MakeIPConfig(procCmdline)
 	rtx.Must(err, "Could not populate the IP configuration")
 	index, err := ReadIndexFromJSON(os.Stdin)
-	if err != nil {
-		// Fallback to deprecated method.
-		index, err = DiscoverIndex()
-		rtx.Must(err, "Could not discover the index")
-	}
+	rtx.Must(err, "Could not discover the index")
 	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
