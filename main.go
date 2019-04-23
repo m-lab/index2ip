@@ -173,12 +173,13 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		// ensure a 16 byte array as the underlying storage (which is what we need) we
 		// call To16() which has the job of ensuring 16 bytes of storage backing.
 		ipv6 = ipv6.To16()
-		var lastoctet int64
-		lastoctet = int64(ipv6[15])
-		if lastoctet+index > 255 || index < 0 {
+		// It is impossible to have an all-formatted integer here.
+		base16Index, _ := strconv.ParseInt(strconv.FormatInt(index, 10), 16, 64)
+		lastoctet := int64(ipv6[15])
+		if lastoctet+base16Index > 255 || base16Index < 0 {
 			return errors.New("Index out of range for IPv6 address")
 		}
-		ipv6[15] = byte(lastoctet + index)
+		ipv6[15] = byte(lastoctet + base16Index)
 		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
 	}
 	return nil
