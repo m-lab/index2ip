@@ -180,8 +180,7 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 	if d+index > 255 || index < 0 {
 		return errors.New("Index out of range for address")
 	}
-	d += index
-	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d, subnet)
+	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
 	// Add the index to the IPv6 address, if it exists.
 	if config.IPv6 != nil {
 		addrSubnet := strings.Split(config.IPv6.IP, "/")
