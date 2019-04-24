@@ -125,6 +125,50 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	return config, nil
 }
 
+// Base10AdditionInBase16 implements a subtle addition operation that aids
+// M-Lab operations staff in visually aligning IPv6 and IPv4 data.
+//
+// In an effort to keep with an established M-Lab deployment pattern, we
+// ensure that the IPv4 last octet (printed in base 10) and the IPv6 last
+// grouping (printed in base 16) match up exactly.
+//
+// Some examples:
+//   IPv4 address 1.0.0.9 + index 12 -> 1.0.0.21
+//   IPv6 address 1f::9 + index 12 -> 1f::21
+//   IPv4 address 1.0.0.201 + index 12 -> 1.0.0.213
+//   IPv6 address 1f::201 + index 12 -> 1f::213
+//
+// Note that in the first example, the IPv6 address, when printed in decimal,
+// is actually 33 (0x21). M-Lab already assigns IPv6 subnets in matching
+// base-10 configurations, so this should work for our use case.
+//
+// The second example is a nice illustration of why this process has to involve
+// the last two bytes of the IPv6 address, because 0x213 > 0xFF. It is for this
+// reason that the function returns two bytes.
+func Base10AdditionInBase16(octets []byte, index int64) ([]byte, error) {
+	if len(octets) != 2 {
+		return []byte{0, 0}, fmt.Errorf("Passed-in slice %v was not of length 2", octets)
+	}
+
+	base16Number := 256*int64(octets[0]) + int64(octets[1])
+	base16String := strconv.FormatInt(base16Number, 16)
+	base10Number, err := strconv.ParseInt(base16String, 10, 64)
+	if err != nil {
+		return []byte{0, 0}, err
+	}
+	base10Number += index
+	base10String := strconv.FormatInt(base10Number, 10)
+
+	// All base 10 strings are valid base 16 numbers, so parse errors are
+	// impossible here in one sense, but it is also true that the number could (in
+	// the case of some edge-case strange inputs) be outside of the range of int16.
+	base16Result, err := strconv.ParseInt(base10String, 16, 16)
+	if err != nil {
+		return []byte{0, 0}, err
+	}
+	return []byte{byte(base16Result / 256), byte(base16Result % 256)}, nil
+}
+
 // AddIndexToIP updates the config in light of the discovered index.
 func AddIndexToIP(config *CniConfig, index int64) error {
 	// Add the index to the IPv4 address.
@@ -136,7 +180,8 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 	if d+index > 255 || index < 0 {
 		return errors.New("Index out of range for address")
 	}
-	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
+	d += index
+	config.IPv4.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d, subnet)
 	// Add the index to the IPv6 address, if it exists.
 	if config.IPv6 != nil {
 		addrSubnet := strings.Split(config.IPv6.IP, "/")
@@ -152,13 +197,14 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		// ensure a 16 byte array as the underlying storage (which is what we need) we
 		// call To16() which has the job of ensuring 16 bytes of storage backing.
 		ipv6 = ipv6.To16()
-		// It is impossible to have an all-formatted integer here.
-		base16Index, _ := strconv.ParseInt(strconv.FormatInt(index, 10), 16, 64)
-		lastoctet := int64(ipv6[15])
-		if lastoctet+base16Index > 255 || base16Index < 0 {
-			return errors.New("Index out of range for IPv6 address")
+
+		lastoctets, err := Base10AdditionInBase16(ipv6[14:16], index)
+		if err != nil {
+			return err
 		}
-		ipv6[15] = byte(lastoctet + base16Index)
+		ipv6[14] = lastoctets[0]
+		ipv6[15] = lastoctets[1]
+
 		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
 	}
 	return nil

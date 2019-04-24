@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -75,6 +76,7 @@ func TestAddIndexToIP(t *testing.T) {
 		answer6 string
 	}
 	goodInputPairs := []AddIndexTestCase{
+		// Some random IPs to test every index in the expected range [1,12].
 		{"1.2.3.4/26", "", 1, "1.2.3.5/26", ""},
 		{"1.2.3.4/26", "", 2, "1.2.3.6/26", ""},
 		{"1.2.3.4/26", "", 3, "1.2.3.7/26", ""},
@@ -87,6 +89,17 @@ func TestAddIndexToIP(t *testing.T) {
 		{"1.2.3.4/26", "1:2::/64", 10, "1.2.3.14/26", "1:2::10/64"},
 		{"1.2.3.4/26", "1::10/64", 11, "1.2.3.15/26", "1::21/64"},
 		{"1.2.3.4/26", "", 12, "1.2.3.16/26", ""},
+		// MLab1s are ::9, ::73, ::137, ::201. MLab4s are ::48, ::112, ::176, ::240.
+		// We add at least one test case for every MLab1 or 4, and we use the higher
+		// indices to catch base-conversion edge cases.
+		{"1.2.3.9/26", "::9/64", 12, "1.2.3.21/26", "::21/64"},
+		{"1.2.3.73/26", "::73/64", 11, "1.2.3.84/26", "::84/64"},
+		{"1.2.3.137/26", "::137/64", 10, "1.2.3.147/26", "::147/64"},
+		{"1.2.3.201/26", "::201/64", 9, "1.2.3.210/26", "::210/64"},
+		{"1.2.3.48/26", "::48/64", 8, "1.2.3.56/26", "::56/64"},
+		{"1.2.3.112/26", "::112/64", 7, "1.2.3.119/26", "::119/64"},
+		{"1.2.3.176/26", "::176/64", 6, "1.2.3.182/26", "::182/64"},
+		{"1.2.3.240/26", "::240/64", 5, "1.2.3.245/26", "::245/64"},
 	}
 	for _, testCase := range goodInputPairs {
 		config := &CniConfig{
@@ -258,4 +271,55 @@ func WithInputTestEndToEnd(t *testing.T, input string) string {
 		t.Error("Bad data output from index2ip: ", string(output))
 	}
 	return config.IPv4.IP
+}
+
+func int16ToTwoBytes(i int16) []byte {
+	return []byte{byte(i / 256), byte(i % 256)}
+}
+
+func TestBase10AdditionInBase16(t *testing.T) {
+	tests := []struct {
+		octets  []byte
+		index   int64
+		want    []byte
+		wantErr bool
+	}{
+		{
+			octets: []byte{0, 9},
+			index:  2,
+			want:   int16ToTwoBytes(0x11),
+		},
+		{
+			octets: []byte{0, 9},
+			index:  12,
+			want:   int16ToTwoBytes(0x21),
+		},
+		{
+			octets:  []byte{0, 9, 10},
+			index:   12,
+			wantErr: true,
+		},
+		{
+			octets:  []byte{0, 9},
+			index:   65536,
+			wantErr: true,
+		},
+		{
+			octets: int16ToTwoBytes(0x201),
+			index:  12,
+			want:   int16ToTwoBytes(0x213),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint("TestBase10AddtionInBase16", tt.octets, tt.index), func(t *testing.T) {
+			got, err := Base10AdditionInBase16(tt.octets, tt.index)
+			if (err == nil) == tt.wantErr {
+				t.Errorf("Base10AdditionInBase16(%v, %d) error = %v, wantErr %v", tt.octets, tt.index, err, tt.wantErr)
+				return
+			}
+			if err == nil && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Base10AdditionInBase16(%v, %d) = %v, want %v", tt.octets, tt.index, got, tt.want)
+			}
+		})
+	}
 }
