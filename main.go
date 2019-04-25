@@ -130,7 +130,7 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 //
 // In an effort to keep with an established M-Lab deployment pattern, we
 // ensure that the IPv4 last octet (printed in base 10) and the IPv6 last
-// grouping (printed in base 16) match up exactly.
+// grouping (printed in base 16) match up visually.
 //
 // Some examples:
 //   IPv4 address 1.0.0.9 + index 12 -> 1.0.0.21
