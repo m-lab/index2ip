@@ -125,25 +125,48 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 	return config, nil
 }
 
-// DiscoverIndex figures out what index this pod has. The method this uses to
-// discover the index is deprecated. We should be using kubernetes annotations
-// or putting the index in the network config. This uses bad name-munging hacks.
-func DiscoverIndex() (int64, error) {
-	// TODO: Fix this to use k8s annotations.
+// Base10AdditionInBase16 implements a subtle addition operation that aids
+// M-Lab operations staff in visually aligning IPv6 and IPv4 data.
+//
+// In an effort to keep with an established M-Lab deployment pattern, we
+// ensure that the IPv4 last octet (printed in base 10) and the IPv6 last
+// grouping (printed in base 16) match up visually.
+//
+// Some examples:
+//   IPv4 address 1.0.0.9 + index 12 -> 1.0.0.21
+//   IPv6 address 1f::9 + index 12 -> 1f::21
+//   IPv4 address 1.0.0.201 + index 12 -> 1.0.0.213
+//   IPv6 address 1f::201 + index 12 -> 1f::213
+//
+// Note that in the first example, the IPv6 address, when printed in decimal,
+// is actually 33 (0x21). M-Lab already assigns IPv6 subnets in matching
+// base-10 configurations, so this should work for our use case.
+//
+// The second example is a nice illustration of why this process has to involve
+// the last two bytes of the IPv6 address, because 0x213 > 0xFF. It is for this
+// reason that the function returns two bytes.
+func Base10AdditionInBase16(octets []byte, index int64) ([]byte, error) {
+	if len(octets) != 2 {
+		return []byte{0, 0}, fmt.Errorf("Passed-in slice %v was not of length 2", octets)
+	}
 
-	// Example CNI_ARGS: "IgnoreUnknown=1;K8S_POD_NAMESPACE=default;K8S_POD_NAME=poc-index4;K8S_POD_INFRA_CONTAINER_ID=adb9757c7392f7293ecc1147ee2706a70e304de2515f4f3327f37d31124df10b"
-	podNameRe := regexp.MustCompile(`\bK8S_POD_NAME=([^;]*)`)
-	podNameMatches := podNameRe.FindStringSubmatch(os.Getenv("CNI_ARGS"))
-	if len(podNameMatches) != 2 {
-		return -1, errors.New("Could not find pod name in " + os.Getenv("CNI_ARGS"))
+	base16Number := 256*int64(octets[0]) + int64(octets[1])
+	base16String := strconv.FormatInt(base16Number, 16)
+	base10Number, err := strconv.ParseInt(base16String, 10, 64)
+	if err != nil {
+		return []byte{0, 0}, err
 	}
-	podName := podNameMatches[1]
-	indexRe := regexp.MustCompile("index([0-9]+)")
-	indexMatches := indexRe.FindStringSubmatch(podName)
-	if len(indexMatches) != 2 {
-		return -1, errors.New("Could not find index in " + podName)
+	base10Number += index
+	base10String := strconv.FormatInt(base10Number, 10)
+
+	// All base 10 strings are valid base 16 numbers, so parse errors are
+	// impossible here in one sense, but it is also true that the number could (in
+	// the case of some edge-case strange inputs) be outside of the range of int16.
+	base16Result, err := strconv.ParseInt(base10String, 16, 16)
+	if err != nil {
+		return []byte{0, 0}, err
 	}
-	return strconv.ParseInt(indexMatches[1], 10, 64)
+	return []byte{byte(base16Result / 256), byte(base16Result % 256)}, nil
 }
 
 // AddIndexToIP updates the config in light of the discovered index.
@@ -173,12 +196,14 @@ func AddIndexToIP(config *CniConfig, index int64) error {
 		// ensure a 16 byte array as the underlying storage (which is what we need) we
 		// call To16() which has the job of ensuring 16 bytes of storage backing.
 		ipv6 = ipv6.To16()
-		var lastoctet int64
-		lastoctet = int64(ipv6[15])
-		if lastoctet+index > 255 || index < 0 {
-			return errors.New("Index out of range for IPv6 address")
+
+		lastoctets, err := Base10AdditionInBase16(ipv6[14:16], index)
+		if err != nil {
+			return err
 		}
-		ipv6[15] = byte(lastoctet + index)
+		ipv6[14] = lastoctets[0]
+		ipv6[15] = lastoctets[1]
+
 		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
 	}
 	return nil
@@ -225,11 +250,7 @@ func main() {
 	config, err := MakeIPConfig(procCmdline)
 	rtx.Must(err, "Could not populate the IP configuration")
 	index, err := ReadIndexFromJSON(os.Stdin)
-	if err != nil {
-		// Fallback to deprecated method.
-		index, err = DiscoverIndex()
-		rtx.Must(err, "Could not discover the index")
-	}
+	rtx.Must(err, "Could not discover the index")
 	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
