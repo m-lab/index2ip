@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/m-lab/go/osx"
+	"github.com/m-lab/go/rtx"
 )
 
 func TestMakeIPConfig(t *testing.T) {
@@ -241,12 +242,18 @@ func TestEndToEnd(t *testing.T) {
 	defer revertCni()
 
 	// The IP address in this test should come from the parsed index on stdin.
-	if "4.14.159.117/26" != WithInputTestEndToEnd(t, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`) {
+	output := WithInputTestEndToEnd(t, "ADD", `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
+	config := CniConfig{}
+	rtx.Must(json.Unmarshal(output, &config), "COuld not unmarshal")
+	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
+		t.Error("Bad data output from index2ip: ", string(output))
+	}
+	if "4.14.159.117/26" != config.IPv4.IP {
 		t.Error("Wrong IP returned when index 5 was provided")
 	}
 }
 
-func WithInputTestEndToEnd(t *testing.T, input string) string {
+func WithInputTestEndToEnd(t *testing.T, op, input string) []byte {
 	oldStdout := os.Stdout
 	stdoutR, stdoutW, _ := os.Pipe()
 	os.Stdout = stdoutW
@@ -256,21 +263,18 @@ func WithInputTestEndToEnd(t *testing.T, input string) string {
 	os.Stdin = stdinR
 
 	go func() {
+		os.Args = []string{"./index2ip", op}
 		main()
 		stdoutW.Close()
 	}()
 	fmt.Fprint(stdinW, input)
 	stdinW.Close()
-	output, _ := ioutil.ReadAll(stdoutR)
+	output, err := ioutil.ReadAll(stdoutR)
+	rtx.Must(err, "Could not read any output")
 	os.Stdout = oldStdout
 	os.Stdin = oldStdin
 
-	config := CniConfig{}
-	json.Unmarshal(output, &config)
-	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
-		t.Error("Bad data output from index2ip: ", string(output))
-	}
-	return config.IPv4.IP
+	return output
 }
 
 func int16ToTwoBytes(i int16) []byte {
@@ -319,6 +323,55 @@ func TestBase10AdditionInBase16(t *testing.T) {
 			}
 			if err == nil && !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Base10AdditionInBase16(%v, %d) = %v, want %v", tt.octets, tt.index, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOtherArgsDontCrash(t *testing.T) {
+	WithInputTestEndToEnd(t, "DEL", ``)
+	WithInputTestEndToEnd(t, "CHECK", ``)
+	WithInputTestEndToEnd(t, "unknown", ``)
+	// No crash == success!
+}
+
+type ver struct {
+	CniVersion        string   `json:"cniVersion"`
+	SupportedVersions []string `json:"supportedVersions"`
+}
+
+func TestVersion(t *testing.T) {
+	output := WithInputTestEndToEnd(t, "VERSION", ``)
+	v := &ver{}
+	rtx.Must(json.Unmarshal(output, v), "Could not unmarshal the version")
+	// Should correspond to the cniVersion constant.
+	if v.CniVersion != "0.2.0" {
+		t.Errorf("%q != \"0.2.0\"", v.CniVersion)
+	}
+}
+
+func TestGetOp(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{"add", []string{"binary", "ADD"}, "ADD", false},
+		{"del", []string{"binary", "DEL"}, "DEL", false},
+		{"unknown", []string{"binary", "blah"}, "blah", false},
+		{"long", []string{"binary", "first", "second"}, "first", false},
+		{"tooshort", []string{"binary"}, "", true},
+		{"waytooshort", []string{}, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetOpFromArgs(tt.args)
+			if (err == nil) == tt.wantErr {
+				t.Errorf("wantErr was %v but the error was %v", tt.wantErr, err)
+			}
+			if err == nil && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("want %v, got %v", got, tt.want)
 			}
 		})
 	}

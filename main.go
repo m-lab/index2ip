@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"regexp"
@@ -20,6 +21,11 @@ import (
 
 	"github.com/m-lab/go/rtx"
 )
+
+// This value determines the output schema, and 0.2.0 is compatible with the
+// schema defined in CniConfig.  This is kind of an old schema.
+// TODO(https://github.com/m-lab/index2ip/issues/8): update schema.
+const cniVersion = "0.2.0"
 
 // Configuration objects to hold the CNI config that must be marshalled into Stdout
 
@@ -98,8 +104,7 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfi
 
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
-	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
-	config := &CniConfig{CniVersion: "0.2.0"}
+	config := &CniConfig{CniVersion: cniVersion}
 
 	ipv4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
 	if err != nil {
@@ -244,8 +249,15 @@ func ReadIndexFromJSON(r io.Reader) (int64, error) {
 	return config.Ipam.Index, nil
 }
 
-// Put it all together.
-func main() {
+func GetOpFromArgs(args []string) (string, error) {
+	if len(args) <= 1 {
+		return "", fmt.Errorf("args length too short (must be at least 2 and was %d)", len(args))
+	}
+	return args[1], nil
+
+}
+
+func Add() {
 	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
 	rtx.Must(err, "Could not populate the IP configuration")
@@ -254,4 +266,27 @@ func main() {
 	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
+}
+
+func Version() {
+	fmt.Fprintf(os.Stdout, `{
+  "cniVersion": %q,
+  "supportedVersions": [ %q ]
+}`, cniVersion, cniVersion)
+}
+
+// Put it all together.
+func main() {
+	op, err := GetOpFromArgs(os.Args)
+	rtx.Must(err, "No operation")
+	switch op {
+	case "ADD":
+		Add()
+	case "VERSION":
+		Version()
+	case "DEL", "CHECK":
+		// For DEL and CHECK we affirmatively do nothing.
+	default:
+		log.Printf("Unknown operation %q. Doing nothing.\n", op)
+	}
 }
