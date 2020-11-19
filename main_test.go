@@ -344,6 +344,7 @@ func TestVersion(t *testing.T) {
 	output := WithInputTestEndToEnd(t, "VERSION", ``)
 	v := &ver{}
 	rtx.Must(json.Unmarshal(output, v), "Could not unmarshal the version")
+	// Should correspond to the cniVersion constant.
 	if v.CniVersion != "0.2.0" {
 		t.Errorf("%q != \"0.2.0\"", v.CniVersion)
 	}
