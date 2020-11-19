@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"regexp"
@@ -244,8 +245,21 @@ func ReadIndexFromJSON(r io.Reader) (int64, error) {
 	return config.Ipam.Index, nil
 }
 
-// Put it all together.
-func main() {
+func GetOpFromArgs(args []string) (string, error) {
+	if len(args) <= 1 {
+		return "", fmt.Errorf("args length too short (must be at least 2 and was %d)", len(args))
+	}
+	switch args[1] {
+	case "ADD", "DEL", "VERSION", "CHECK":
+		return args[1], nil
+	default:
+		log.Printf("Unknown CNI operation: %q\n", args[1])
+		return args[1], nil
+	}
+
+}
+
+func Add() {
 	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
 	rtx.Must(err, "Could not populate the IP configuration")
@@ -254,4 +268,27 @@ func main() {
 	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
+}
+
+func Version() {
+	os.Stdout.Write([]byte(`{
+  "cniVersion": "0.2.0",
+  "supportedVersions": [ "0.2.0" ]
+}`))
+}
+
+// Put it all together.
+func main() {
+	op, err := GetOpFromArgs(os.Args)
+	rtx.Must(err, "No operation")
+	switch op {
+	case "ADD":
+		Add()
+	case "VERSION":
+		Version()
+	case "DEL", "CHECK":
+		// For DEL and CHECK we affirmatively do nothing.
+	default:
+		log.Printf("Unknown operation %q. Doing nothing.\n", op)
+	}
 }
