@@ -22,6 +22,11 @@ import (
 	"github.com/m-lab/go/rtx"
 )
 
+// This value determines the output schema, and 0.2.0 is compatible with the
+// schema defined in CniConfig.  This is kind of an old schema.
+// TODO(https://github.com/m-lab/index2ip/issues/8): update schema.
+const cniVersion = "0.2.0"
+
 // Configuration objects to hold the CNI config that must be marshalled into Stdout
 
 // IPConfig holds the IP configuration. The elements are strings to support v4 or v6.
@@ -99,8 +104,7 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfi
 
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
-	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
-	config := &CniConfig{CniVersion: "0.2.0"}
+	config := &CniConfig{CniVersion: cniVersion}
 
 	ipv4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
 	if err != nil {
@@ -249,13 +253,7 @@ func GetOpFromArgs(args []string) (string, error) {
 	if len(args) <= 1 {
 		return "", fmt.Errorf("args length too short (must be at least 2 and was %d)", len(args))
 	}
-	switch args[1] {
-	case "ADD", "DEL", "VERSION", "CHECK":
-		return args[1], nil
-	default:
-		log.Printf("Unknown CNI operation: %q\n", args[1])
-		return args[1], nil
-	}
+	return args[1], nil
 
 }
 
@@ -271,10 +269,10 @@ func Add() {
 }
 
 func Version() {
-	os.Stdout.Write([]byte(`{
-  "cniVersion": "0.2.0",
-  "supportedVersions": [ "0.2.0" ]
-}`))
+	fmt.Fprintf(os.Stdout, `{
+  "cniVersion": %q,
+  "supportedVersions": [ %q ]
+}`, cniVersion, cniVersion)
 }
 
 // Put it all together.
