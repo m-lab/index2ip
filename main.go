@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"regexp"
@@ -20,6 +21,11 @@ import (
 
 	"github.com/m-lab/go/rtx"
 )
+
+// This value determines the output schema, and 0.2.0 is compatible with the
+// schema defined in CniConfig.  This is kind of an old schema.
+// TODO(https://github.com/m-lab/index2ip/issues/8): update schema.
+const cniVersion = "0.2.0"
 
 // Configuration objects to hold the CNI config that must be marshalled into Stdout
 
@@ -98,8 +104,7 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *DNSConfi
 
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
 func MakeIPConfig(procCmdline string) (*CniConfig, error) {
-	// This value determines the output schema, and 0.2.0 is compatible with the schema defined in CniConfig.
-	config := &CniConfig{CniVersion: "0.2.0"}
+	config := &CniConfig{CniVersion: cniVersion}
 
 	ipv4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
 	if err != nil {
@@ -244,8 +249,36 @@ func ReadIndexFromJSON(r io.Reader) (int64, error) {
 	return config.Ipam.Index, nil
 }
 
-// Put it all together.
-func main() {
+// Cmd represents the possible CNI operations for an IPAM plugin.
+type Cmd int
+
+// The CNI operations we know about.
+const (
+	AddCmd = iota
+	DelCmd
+	VersionCmd
+	CheckCmd
+	UnknownCmd
+)
+
+// ParseCmd returns the corresponding Cmd for a string.
+func ParseCmd(cmd string) Cmd {
+	cmd = strings.ToLower(cmd)
+	switch cmd {
+	case "add":
+		return AddCmd
+	case "del":
+		return DelCmd
+	case "version":
+		return VersionCmd
+	case "check":
+		return CheckCmd
+	}
+	return UnknownCmd
+}
+
+// Add responds to the ADD command.
+func Add() {
 	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
 	rtx.Must(err, "Could not populate the IP configuration")
@@ -254,4 +287,29 @@ func main() {
 	rtx.Must(AddIndexToIP(config, index), "Could not manipulate the IP")
 	encoder := json.NewEncoder(os.Stdout)
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
+}
+
+// Version responds to the VERSION command.
+func Version() {
+	fmt.Fprintf(os.Stdout, `{
+  "cniVersion": %q,
+  "supportedVersions": [ %q ]
+}`, cniVersion, cniVersion)
+}
+
+// Put it all together.
+func main() {
+	cmd := os.Getenv("CNI_COMMAND")
+	switch ParseCmd(cmd) {
+	case AddCmd:
+		Add()
+	case VersionCmd:
+		Version()
+	case DelCmd, CheckCmd:
+		// For DEL and CHECK we affirmatively and successfully do nothing.
+	default:
+		// To preserve old behavior: when in doubt, Add()
+		log.Printf("Unknown CNI_COMMAND value %q. Treating it like ADD.\n", cmd)
+		Add()
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/m-lab/go/osx"
+	"github.com/m-lab/go/rtx"
 )
 
 func TestMakeIPConfig(t *testing.T) {
@@ -223,7 +224,7 @@ func TestReadIndexFromJSON(t *testing.T) {
 	}
 }
 
-func TestEndToEnd(t *testing.T) {
+func AddEndToEnd(t *testing.T, addcmd string) {
 	// Set up the environment to look just like it should when the program gets called.
 	if _, isPresent := os.LookupEnv("PROC_CMDLINE_FOR_TESTING"); isPresent {
 		log.Println("Can't test ReadProcCmdlineOrEnv because PROC_CMDLINE_FOR_TESTING is set")
@@ -241,12 +242,26 @@ func TestEndToEnd(t *testing.T) {
 	defer revertCni()
 
 	// The IP address in this test should come from the parsed index on stdin.
-	if "4.14.159.117/26" != WithInputTestEndToEnd(t, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`) {
+	output := WithInputTestEndToEnd(t, addcmd, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
+	config := CniConfig{}
+	rtx.Must(json.Unmarshal(output, &config), "COuld not unmarshal")
+	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
+		t.Error("Bad data output from index2ip: ", string(output))
+	}
+	if "4.14.159.117/26" != config.IPv4.IP {
 		t.Error("Wrong IP returned when index 5 was provided")
 	}
 }
 
-func WithInputTestEndToEnd(t *testing.T, input string) string {
+func TestAddEndToEnd(t *testing.T) {
+	AddEndToEnd(t, "add")
+	AddEndToEnd(t, "ADD")
+	AddEndToEnd(t, "unkndsjkladjoiwdqunknwn")
+	AddEndToEnd(t, "")
+}
+
+func WithInputTestEndToEnd(t *testing.T, op, input string) []byte {
+	defer osx.MustSetenv("CNI_COMMAND", op)()
 	oldStdout := os.Stdout
 	stdoutR, stdoutW, _ := os.Pipe()
 	os.Stdout = stdoutW
@@ -256,21 +271,18 @@ func WithInputTestEndToEnd(t *testing.T, input string) string {
 	os.Stdin = stdinR
 
 	go func() {
+		os.Args = []string{"./index2ip", op}
 		main()
 		stdoutW.Close()
 	}()
 	fmt.Fprint(stdinW, input)
 	stdinW.Close()
-	output, _ := ioutil.ReadAll(stdoutR)
+	output, err := ioutil.ReadAll(stdoutR)
+	rtx.Must(err, "Could not read any output")
 	os.Stdout = oldStdout
 	os.Stdin = oldStdin
 
-	config := CniConfig{}
-	json.Unmarshal(output, &config)
-	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
-		t.Error("Bad data output from index2ip: ", string(output))
-	}
-	return config.IPv4.IP
+	return output
 }
 
 func int16ToTwoBytes(i int16) []byte {
@@ -321,5 +333,26 @@ func TestBase10AdditionInBase16(t *testing.T) {
 				t.Errorf("Base10AdditionInBase16(%v, %d) = %v, want %v", tt.octets, tt.index, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOtherArgsDontCrash(t *testing.T) {
+	WithInputTestEndToEnd(t, "DEL", ``)
+	WithInputTestEndToEnd(t, "CHECK", ``)
+	// No crash == success!
+}
+
+type ver struct {
+	CniVersion        string   `json:"cniVersion"`
+	SupportedVersions []string `json:"supportedVersions"`
+}
+
+func TestVersion(t *testing.T) {
+	output := WithInputTestEndToEnd(t, "VERSION", ``)
+	v := &ver{}
+	rtx.Must(json.Unmarshal(output, v), "Could not unmarshal the version")
+	// Should correspond to the cniVersion constant.
+	if v.CniVersion != "0.2.0" {
+		t.Errorf("%q != \"0.2.0\"", v.CniVersion)
 	}
 }
