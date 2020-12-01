@@ -249,14 +249,35 @@ func ReadIndexFromJSON(r io.Reader) (int64, error) {
 	return config.Ipam.Index, nil
 }
 
-func GetOpFromArgs(args []string) (string, error) {
-	if len(args) <= 1 {
-		return "", fmt.Errorf("args length too short (must be at least 2 and was %d)", len(args))
-	}
-	return args[1], nil
+// Cmd represents the possible CNI operations for an IPAM plugin.
+type Cmd int
 
+// The CNI operations we know about.
+const (
+	AddCmd = iota
+	DelCmd
+	VersionCmd
+	CheckCmd
+	UnknownCmd
+)
+
+// ParseCmd returns the corresponding Cmd for a string.
+func ParseCmd(cmd string) Cmd {
+	cmd = strings.ToLower(cmd)
+	switch cmd {
+	case "add":
+		return AddCmd
+	case "del":
+		return DelCmd
+	case "version":
+		return VersionCmd
+	case "check":
+		return CheckCmd
+	}
+	return UnknownCmd
 }
 
+// Add responds to the ADD command.
 func Add() {
 	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
@@ -268,6 +289,7 @@ func Add() {
 	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
 }
 
+// Version responds to the VERSION command.
 func Version() {
 	fmt.Fprintf(os.Stdout, `{
   "cniVersion": %q,
@@ -277,16 +299,17 @@ func Version() {
 
 // Put it all together.
 func main() {
-	op, err := GetOpFromArgs(os.Args)
-	rtx.Must(err, "No operation")
-	switch op {
-	case "ADD":
+	cmd := os.Getenv("CNI_COMMAND")
+	switch ParseCmd(cmd) {
+	case AddCmd:
 		Add()
-	case "VERSION":
+	case VersionCmd:
 		Version()
-	case "DEL", "CHECK":
-		// For DEL and CHECK we affirmatively do nothing.
+	case DelCmd, CheckCmd:
+		// For DEL and CHECK we affirmatively and successfully do nothing.
 	default:
-		log.Printf("Unknown operation %q. Doing nothing.\n", op)
+		// To preserve old behavior: when in doubt, Add()
+		log.Printf("Unknown CNI_COMMAND value %q. Treating it like ADD.\n", cmd)
+		Add()
 	}
 }

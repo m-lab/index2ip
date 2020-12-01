@@ -224,7 +224,7 @@ func TestReadIndexFromJSON(t *testing.T) {
 	}
 }
 
-func TestEndToEnd(t *testing.T) {
+func AddEndToEnd(t *testing.T, addcmd string) {
 	// Set up the environment to look just like it should when the program gets called.
 	if _, isPresent := os.LookupEnv("PROC_CMDLINE_FOR_TESTING"); isPresent {
 		log.Println("Can't test ReadProcCmdlineOrEnv because PROC_CMDLINE_FOR_TESTING is set")
@@ -242,7 +242,7 @@ func TestEndToEnd(t *testing.T) {
 	defer revertCni()
 
 	// The IP address in this test should come from the parsed index on stdin.
-	output := WithInputTestEndToEnd(t, "ADD", `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
+	output := WithInputTestEndToEnd(t, addcmd, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
 	config := CniConfig{}
 	rtx.Must(json.Unmarshal(output, &config), "COuld not unmarshal")
 	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
@@ -253,7 +253,15 @@ func TestEndToEnd(t *testing.T) {
 	}
 }
 
+func TestAddEndToEnd(t *testing.T) {
+	AddEndToEnd(t, "add")
+	AddEndToEnd(t, "ADD")
+	AddEndToEnd(t, "unkndsjkladjoiwdqunknwn")
+	AddEndToEnd(t, "")
+}
+
 func WithInputTestEndToEnd(t *testing.T, op, input string) []byte {
+	defer osx.MustSetenv("CNI_COMMAND", op)()
 	oldStdout := os.Stdout
 	stdoutR, stdoutW, _ := os.Pipe()
 	os.Stdout = stdoutW
@@ -331,7 +339,6 @@ func TestBase10AdditionInBase16(t *testing.T) {
 func TestOtherArgsDontCrash(t *testing.T) {
 	WithInputTestEndToEnd(t, "DEL", ``)
 	WithInputTestEndToEnd(t, "CHECK", ``)
-	WithInputTestEndToEnd(t, "unknown", ``)
 	// No crash == success!
 }
 
@@ -347,32 +354,5 @@ func TestVersion(t *testing.T) {
 	// Should correspond to the cniVersion constant.
 	if v.CniVersion != "0.2.0" {
 		t.Errorf("%q != \"0.2.0\"", v.CniVersion)
-	}
-}
-
-func TestGetOp(t *testing.T) {
-	tests := []struct {
-		name    string
-		args    []string
-		want    string
-		wantErr bool
-	}{
-		{"add", []string{"binary", "ADD"}, "ADD", false},
-		{"del", []string{"binary", "DEL"}, "DEL", false},
-		{"unknown", []string{"binary", "blah"}, "blah", false},
-		{"long", []string{"binary", "first", "second"}, "first", false},
-		{"tooshort", []string{"binary"}, "", true},
-		{"waytooshort", []string{}, "", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := GetOpFromArgs(tt.args)
-			if (err == nil) == tt.wantErr {
-				t.Errorf("wantErr was %v but the error was %v", tt.wantErr, err)
-			}
-			if err == nil && !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("want %v, got %v", got, tt.want)
-			}
-		})
 	}
 }
