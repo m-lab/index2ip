@@ -20,8 +20,8 @@ func TestMakeIPConfig(t *testing.T) {
 	if config.CniVersion != "0.3.1" {
 		t.Error("Wrong CNI version:", config.CniVersion)
 	}
-	if config.IPs[0].IP != "4.14.159.112/26" {
-		t.Error("Wrong V4 address:", config.IPs[0].IP)
+	if config.IPs[0].Address != "4.14.159.112/26" {
+		t.Error("Wrong V4 address:", config.IPs[0].Address)
 	}
 	if config.IPs[0].Gateway != "4.14.159.65" {
 		t.Error("Wrong gateway:", config.IPs[0].Gateway)
@@ -107,14 +107,14 @@ func TestAddIndexToIP(t *testing.T) {
 			IPs: []*IPConfig{
 				{
 					Version: v4,
-					IP:      testCase.ip4,
+					Address: testCase.ip4,
 				},
 			},
 		}
 		if testCase.ip6 != "" {
 			config.IPs = append(config.IPs, &IPConfig{
 				Version: v6,
-				IP:      testCase.ip6,
+				Address: testCase.ip6,
 			})
 		}
 		err := AddIndexToIPs(config, testCase.index)
@@ -126,11 +126,11 @@ func TestAddIndexToIP(t *testing.T) {
 			t.Errorf("No IP address produced when making %v", config)
 			continue
 		}
-		if config.IPs[0].IP != testCase.answer4 {
-			t.Errorf("%s + %d should be %s but was %s", testCase.ip4, testCase.index, testCase.answer4, config.IPs[0].IP)
+		if config.IPs[0].Address != testCase.answer4 {
+			t.Errorf("%s + %d should be %s but was %s", testCase.ip4, testCase.index, testCase.answer4, config.IPs[0].Address)
 		}
-		if len(config.IPs) == 2 && config.IPs[1].IP != testCase.answer6 {
-			t.Errorf("%s + %d should be %s but was %s", testCase.ip6, testCase.index, testCase.answer6, config.IPs[1].IP)
+		if len(config.IPs) == 2 && config.IPs[1].Address != testCase.answer6 {
+			t.Errorf("%s + %d should be %s but was %s", testCase.ip6, testCase.index, testCase.answer6, config.IPs[1].Address)
 		}
 	}
 	badInputPairs := []AddIndexTestCase{
@@ -145,14 +145,14 @@ func TestAddIndexToIP(t *testing.T) {
 			IPs: []*IPConfig{
 				{
 					Version: v4,
-					IP:      testCase.ip4,
+					Address: testCase.ip4,
 				},
 			},
 		}
 		if testCase.ip6 != "" {
 			config.IPs = append(config.IPs, &IPConfig{
 				Version: v6,
-				IP:      testCase.ip6,
+				Address: testCase.ip6,
 			})
 		}
 		err := AddIndexToIPs(config, testCase.index)
