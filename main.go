@@ -31,13 +31,14 @@ const cniVersion = "0.3.1"
 // IPConfig holds the IP configuration. The elements are strings to support v4 or v6.
 type IPConfig struct {
 	Version IPaf   `json:"version"`
-	IP      string `json:"ip"`
+	Address string `json:"address"`
 	Gateway string `json:"gateway"`
 }
 
 // RouteConfig holds the subnets for which an interface should receive packets.
 type RouteConfig struct {
 	Destination string `json:"dst"`
+	Gateway     string `json:"gw"`
 }
 
 // DNSConfig holds a list of IP addresses for nameservers.
@@ -90,10 +91,14 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *RouteCon
 		return nil, nil, nil, errors.New("Could not split up " + matches[1] + " into 4 parts")
 	}
 
-	Route := &RouteConfig{Destination: destination}
+	Route := &RouteConfig{
+		Destination: destination,
+		Gateway:     config[1],
+	}
+
 	IP := &IPConfig{
 		Version: version,
-		IP:      config[0],
+		Address: config[0],
 		Gateway: config[1],
 	}
 	DNS := &DNSConfig{Nameservers: []string{config[2], config[3]}}
@@ -180,19 +185,19 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 	case v4:
 		// Add the index to the IPv4 address.
 		var a, b, c, d, subnet int64
-		_, err := fmt.Sscanf(config.IP, "%d.%d.%d.%d/%d", &a, &b, &c, &d, &subnet)
+		_, err := fmt.Sscanf(config.Address, "%d.%d.%d.%d/%d", &a, &b, &c, &d, &subnet)
 		if err != nil {
-			return errors.New("Could not parse IPv4 address: " + config.IP)
+			return errors.New("Could not parse IPv4 address: " + config.Address)
 		}
 		if d+index > 255 || index < 0 {
 			return errors.New("Index out of range for address")
 		}
-		config.IP = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
+		config.Address = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
 	case v6:
 		// Add the index to the IPv6 address.
-		addrSubnet := strings.Split(config.IP, "/")
+		addrSubnet := strings.Split(config.Address, "/")
 		if len(addrSubnet) != 2 {
-			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.IP)
+			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.Address)
 		}
 		ipv6 := net.ParseIP(addrSubnet[0])
 		if ipv6 == nil {
