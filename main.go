@@ -216,7 +216,7 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 		ipv6[14] = lastoctets[0]
 		ipv6[15] = lastoctets[1]
 
-		config.IPv6.IP = ipv6.String() + "/" + addrSubnet[1]
+		config.Address = ipv6.String() + "/" + addrSubnet[1]
 	default:
 		return errors.New("Unknown IP version")
 	}

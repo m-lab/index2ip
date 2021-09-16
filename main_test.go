@@ -260,11 +260,11 @@ func AddEndToEnd(t *testing.T, addcmd string) {
 	// The IP address in this test should come from the parsed index on stdin.
 	output := WithInputTestEndToEnd(t, addcmd, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
 	config := CniConfig{}
-	rtx.Must(json.Unmarshal(output, &config), "COuld not unmarshal")
-	if config.CniVersion != "0.2.0" || config.IPv4.Gateway != "4.14.159.65" {
+	rtx.Must(json.Unmarshal(output, &config), "Could not unmarshal")
+	if config.CniVersion != "0.3.1" || config.IPs[0].Gateway != "4.14.159.65" {
 		t.Error("Bad data output from index2ip: ", string(output))
 	}
-	if "4.14.159.117/26" != config.IPv4.IP {
+	if "4.14.159.117/26" != config.IPs[0].Address {
 		t.Error("Wrong IP returned when index 5 was provided")
 	}
 }
@@ -368,7 +368,7 @@ func TestVersion(t *testing.T) {
 	v := &ver{}
 	rtx.Must(json.Unmarshal(output, v), "Could not unmarshal the version")
 	// Should correspond to the cniVersion constant.
-	if v.CniVersion != "0.2.0" {
-		t.Errorf("%q != \"0.2.0\"", v.CniVersion)
+	if v.CniVersion != "0.3.1" {
+		t.Errorf("%q != \"0.3.1\"", v.CniVersion)
 	}
 }
