@@ -1,5 +1,8 @@
 language: go
 
+go:
+- "1.16"
+
 before_script:
 - go get golang.org/x/tools/cmd/cover
 - go get github.com/mattn/goveralls
