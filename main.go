@@ -202,7 +202,7 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 		if err != nil {
 			return errors.New("Could not parse IPv4 address: " + config.Address)
 		}
-		if d+index > 255 || index < 0 {
+		if d+index > 255 || index <= 0 {
 			return errors.New("Index out of range for address")
 		}
 		config.Address = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
@@ -313,7 +313,7 @@ func Add() error {
 // Version responds to the VERSION command.
 func Version() {
 	fmt.Fprintf(os.Stdout, `{
-  "cniVersion": 0.3.1,
+  "cniVersion": "0.3.1",
   "supportedVersions": [ "0.2.0", "0.3.0", "0.3.1", "0.4.0" ]
 }`)
 }
