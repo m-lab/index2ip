@@ -137,9 +137,7 @@ func MakeIPConfig(procCmdline string) (*CniResult, error) {
 		// v6 config is optional. Only set it up if the error is nil.
 		config.IPs = append(config.IPs, ipv6)
 		config.Routes = append(config.Routes, route6)
-		for _, server := range dnsv6.Nameservers {
-			config.DNS.Nameservers = append(config.DNS.Nameservers, server)
-		}
+		config.DNS.Nameservers = append(config.DNS.Nameservers, dnsv6.Nameservers...)
 	case ErrNoIPv6:
 		// Do nothing, but also don't return an error
 	default:
@@ -170,7 +168,7 @@ func MakeIPConfig(procCmdline string) (*CniResult, error) {
 // reason that the function returns two bytes.
 func Base10AdditionInBase16(octets []byte, index int64) ([]byte, error) {
 	if len(octets) != 2 {
-		return []byte{0, 0}, fmt.Errorf("Passed-in slice %v was not of length 2", octets)
+		return []byte{0, 0}, fmt.Errorf("passed-in slice %v was not of length 2", octets)
 	}
 
 	base16Number := 256*int64(octets[0]) + int64(octets[1])
@@ -203,18 +201,18 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 			return errors.New("Could not parse IPv4 address: " + config.Address)
 		}
 		if d+index > 255 || index <= 0 {
-			return errors.New("Index out of range for address")
+			return errors.New("ihdex out of range for address")
 		}
 		config.Address = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
 	case v6:
 		// Add the index to the IPv6 address.
 		addrSubnet := strings.Split(config.Address, "/")
 		if len(addrSubnet) != 2 {
-			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.Address)
+			return fmt.Errorf("could not parse IPv6 IP/subnet %v", config.Address)
 		}
 		ipv6 := net.ParseIP(addrSubnet[0])
 		if ipv6 == nil {
-			return fmt.Errorf("Cloud not parse IPv6 address %v", addrSubnet[0])
+			return fmt.Errorf("cloud not parse IPv6 address %v", addrSubnet[0])
 		}
 		// Ensure that the byte array is 16 bytes. According to the "net" API docs,
 		// the byte array length and the IP address family are purposely decoupled. To
@@ -231,7 +229,7 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 
 		config.Address = ipv6.String() + "/" + addrSubnet[1]
 	default:
-		return errors.New("Unknown IP version")
+		return errors.New("unknown IP version")
 	}
 	return nil
 }
@@ -306,7 +304,9 @@ func Add() error {
 	rtx.Must(err, "Could not populate the IP configuration")
 	rtx.Must(AddIndexToIPs(config, CNIConfig.Ipam.Index), "Could not manipulate the IP")
 	data, err := json.Marshal(config)
+	rtx.Must(err, "failed to marshall CNI output to JSON")
 	result, err := cni.NewResult(data)
+	rtx.Must(err, "failed to create new result type from JSON")
 	return types.PrintResult(result, CNIConfig.CNIVersion)
 }
 

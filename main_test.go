@@ -273,7 +273,7 @@ func AddEndToEnd(t *testing.T, addcmd string) {
 	if config.CniVersion != "0.3.1" || config.IPs[0].Gateway != "4.14.159.65" {
 		t.Error("Bad data output from index2ip: ", string(output))
 	}
-	if "4.14.159.117/26" != config.IPs[0].Address {
+	if config.IPs[0].Address != "4.14.159.117/26" {
 		t.Error("Wrong IP returned when index 5 was provided")
 	}
 }
