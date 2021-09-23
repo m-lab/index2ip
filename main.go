@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containernetworking/cni/pkg/types"
+	cni "github.com/containernetworking/cni/pkg/types/040"
 	"github.com/m-lab/go/rtx"
 )
 
@@ -46,12 +48,19 @@ type DNSConfig struct {
 	Nameservers []string `json:"nameservers"`
 }
 
-// CniConfig holds a complete CNI configuration, including the protocol version.
-type CniConfig struct {
+// CniResult holds a complete CNI result, including the protocol version.
+type CniResult struct {
 	CniVersion string         `json:"cniVersion"`
 	IPs        []*IPConfig    `json:"ips,omitempty"`
 	Routes     []*RouteConfig `json:"routes,omitempty"`
 	DNS        *DNSConfig     `json:"dns,omitempty"`
+}
+
+type JSONInput struct {
+	CNIVersion string `json:"cniVersion"`
+	Ipam       struct {
+		Index int64 `json:"index"`
+	} `json:"ipam"`
 }
 
 // IPaf represents the IP address family.
@@ -62,8 +71,12 @@ const (
 	v6 IPaf = "6"
 )
 
-// ErrNoIPv6 is returned when we attempt to configure IPv6 on a system which has no v6 address.
-var ErrNoIPv6 = errors.New("IPv6 is not supported or configured")
+var (
+	CNIConfig JSONInput
+
+	// ErrNoIPv6 is returned when we attempt to configure IPv6 on a system which has no v6 address.
+	ErrNoIPv6 = errors.New("IPv6 is not supported or configured")
+)
 
 // MakeGenericIPConfig makes IPConfig and DNSConfig objects out of the epoxy command line.
 func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *RouteConfig, *DNSConfig, error) {
@@ -106,8 +119,8 @@ func MakeGenericIPConfig(procCmdline string, version IPaf) (*IPConfig, *RouteCon
 }
 
 // MakeIPConfig makes the initial config from /proc/cmdline without incrementing up to the index.
-func MakeIPConfig(procCmdline string) (*CniConfig, error) {
-	config := &CniConfig{CniVersion: cniVersion}
+func MakeIPConfig(procCmdline string) (*CniResult, error) {
+	config := &CniResult{CniVersion: cniVersion}
 
 	ipv4, route4, dnsv4, err := MakeGenericIPConfig(procCmdline, v4)
 	if err != nil {
@@ -124,9 +137,7 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 		// v6 config is optional. Only set it up if the error is nil.
 		config.IPs = append(config.IPs, ipv6)
 		config.Routes = append(config.Routes, route6)
-		for _, server := range dnsv6.Nameservers {
-			config.DNS.Nameservers = append(config.DNS.Nameservers, server)
-		}
+		config.DNS.Nameservers = append(config.DNS.Nameservers, dnsv6.Nameservers...)
 	case ErrNoIPv6:
 		// Do nothing, but also don't return an error
 	default:
@@ -157,7 +168,7 @@ func MakeIPConfig(procCmdline string) (*CniConfig, error) {
 // reason that the function returns two bytes.
 func Base10AdditionInBase16(octets []byte, index int64) ([]byte, error) {
 	if len(octets) != 2 {
-		return []byte{0, 0}, fmt.Errorf("Passed-in slice %v was not of length 2", octets)
+		return []byte{0, 0}, fmt.Errorf("passed-in slice %v was not of length 2", octets)
 	}
 
 	base16Number := 256*int64(octets[0]) + int64(octets[1])
@@ -189,19 +200,19 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 		if err != nil {
 			return errors.New("Could not parse IPv4 address: " + config.Address)
 		}
-		if d+index > 255 || index < 0 {
-			return errors.New("Index out of range for address")
+		if d+index > 255 || index <= 0 {
+			return errors.New("ihdex out of range for address")
 		}
 		config.Address = fmt.Sprintf("%d.%d.%d.%d/%d", a, b, c, d+index, subnet)
 	case v6:
 		// Add the index to the IPv6 address.
 		addrSubnet := strings.Split(config.Address, "/")
 		if len(addrSubnet) != 2 {
-			return fmt.Errorf("Could not parse IPv6 IP/subnet %v", config.Address)
+			return fmt.Errorf("could not parse IPv6 IP/subnet %v", config.Address)
 		}
 		ipv6 := net.ParseIP(addrSubnet[0])
 		if ipv6 == nil {
-			return fmt.Errorf("Cloud not parse IPv6 address %v", addrSubnet[0])
+			return fmt.Errorf("cloud not parse IPv6 address %v", addrSubnet[0])
 		}
 		// Ensure that the byte array is 16 bytes. According to the "net" API docs,
 		// the byte array length and the IP address family are purposely decoupled. To
@@ -218,13 +229,13 @@ func AddIndexToIP(config *IPConfig, index int64) error {
 
 		config.Address = ipv6.String() + "/" + addrSubnet[1]
 	default:
-		return errors.New("Unknown IP version")
+		return errors.New("unknown IP version")
 	}
 	return nil
 }
 
 // AddIndexToIPs updates the config in light of the discovered index.
-func AddIndexToIPs(config *CniConfig, index int64) error {
+func AddIndexToIPs(config *CniResult, index int64) error {
 	for _, ip := range config.IPs {
 		if err := AddIndexToIP(ip, index); err != nil {
 			return err
@@ -249,23 +260,11 @@ func MustReadProcCmdline() string {
 	return string(procCmdline)
 }
 
-// ReadIndexFromJSON unmarshals JSON input to read the index argument contained therein.
-func ReadIndexFromJSON(r io.Reader) (int64, error) {
-	type JSONInput struct {
-		Ipam struct {
-			Index int64 `json:"index"`
-		} `json:"ipam"`
-	}
+// ReadJSONInput unmarshals JSON input from stdin into a global variable.
+func ReadJSONInput(r io.Reader) error {
 	dec := json.NewDecoder(r)
-	config := JSONInput{}
-	err := dec.Decode(&config)
-	if err != nil {
-		return -1, err
-	}
-	if config.Ipam.Index == 0 {
-		return -1, errors.New("the index was either 0 or not found")
-	}
-	return config.Ipam.Index, nil
+	err := dec.Decode(&CNIConfig)
+	return err
 }
 
 // Cmd represents the possible CNI operations for an IPAM plugin.
@@ -297,23 +296,26 @@ func ParseCmd(cmd string) Cmd {
 }
 
 // Add responds to the ADD command.
-func Add() {
+func Add() error {
+	err := ReadJSONInput(os.Stdin)
+	rtx.Must(err, "Could not unmarshall JSON from stdin")
 	procCmdline := MustReadProcCmdline()
 	config, err := MakeIPConfig(procCmdline)
 	rtx.Must(err, "Could not populate the IP configuration")
-	index, err := ReadIndexFromJSON(os.Stdin)
-	rtx.Must(err, "Could not discover the index")
-	rtx.Must(AddIndexToIPs(config, index), "Could not manipulate the IP")
-	encoder := json.NewEncoder(os.Stdout)
-	rtx.Must(encoder.Encode(config), "Could not serialize the struct")
+	rtx.Must(AddIndexToIPs(config, CNIConfig.Ipam.Index), "Could not manipulate the IP")
+	data, err := json.Marshal(config)
+	rtx.Must(err, "failed to marshall CNI output to JSON")
+	result, err := cni.NewResult(data)
+	rtx.Must(err, "failed to create new result type from JSON")
+	return types.PrintResult(result, CNIConfig.CNIVersion)
 }
 
 // Version responds to the VERSION command.
 func Version() {
 	fmt.Fprintf(os.Stdout, `{
-  "cniVersion": %q,
-  "supportedVersions": [ %q ]
-}`, cniVersion, cniVersion)
+  "cniVersion": "0.3.1",
+  "supportedVersions": [ "0.2.0", "0.3.0", "0.3.1", "0.4.0" ]
+}`)
 }
 
 // Put it all together.

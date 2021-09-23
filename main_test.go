@@ -103,7 +103,7 @@ func TestAddIndexToIP(t *testing.T) {
 		{"1.2.3.240/26", "::240/64", 5, "1.2.3.245/26", "::245/64"},
 	}
 	for _, testCase := range goodInputPairs {
-		config := &CniConfig{
+		config := &CniResult{
 			IPs: []*IPConfig{
 				{
 					Version: v4,
@@ -141,7 +141,7 @@ func TestAddIndexToIP(t *testing.T) {
 		{"1.2.3.4/26", "1:2::FE/64", 6, "", ""},
 	}
 	for _, testCase := range badInputPairs {
-		config := &CniConfig{
+		config := &CniResult{
 			IPs: []*IPConfig{
 				{
 					Version: v4,
@@ -192,11 +192,19 @@ func TestMustReadProcCmdlineOrEnv(t *testing.T) {
 func TestConfigStructure(t *testing.T) {
 	jsonString := `{
   "cniVersion": "0.2.0",
-  "ip4": {
-      "ip": "1.2.3.4/26",
-      "gateway": "1.2.3.65",
-      "routes": [ { "dst": "0.0.0.0/0" } ]
-  },
+  "ips": [
+	  {
+		 "version": "4",
+         "address": "1.2.3.4/26",
+         "gateway": "1.2.3.65"
+	  }
+  ],
+  "routes": [
+	  {
+		  "dst": "0.0.0.0/0",
+		  "gw": "1.2.3.65"
+	  }
+  ],
   "dns": {
       "nameservers": [
           "8.8.8.8",
@@ -204,22 +212,22 @@ func TestConfigStructure(t *testing.T) {
       ]
   }
 }`
-	config := CniConfig{}
+	config := CniResult{}
 	err := json.Unmarshal([]byte(jsonString), &config)
 	if err != nil {
 		t.Error(err)
 	}
 }
 
-func TestReadIndexFromJSON(t *testing.T) {
+func TestReadJSONInput(t *testing.T) {
 	// Input taken from real input.
 	input := `{"ipam":{"index":4,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`
-	index, err := ReadIndexFromJSON(strings.NewReader(input))
+	err := ReadJSONInput(strings.NewReader(input))
 	if err != nil {
-		t.Error("ReadIndexFromJSON error:", err)
+		t.Error("ReadJSONInput error:", err)
 	}
-	if index != 4 {
-		t.Error("Index should be 4, but was", index)
+	if CNIConfig.Ipam.Index != 4 {
+		t.Error("Index should be 4, but was", CNIConfig.Ipam.Index)
 	}
 
 	// Now try with bad input
@@ -232,10 +240,11 @@ func TestReadIndexFromJSON(t *testing.T) {
 		`{{}`,
 		`}`,
 	}
+	CNIConfig.Ipam.Index = 0
 	for _, bad := range badInput {
-		index, err = ReadIndexFromJSON(strings.NewReader(bad))
-		if err == nil || index >= 0 {
-			t.Errorf("Should have encountered an error on input: '%s'", bad)
+		ReadJSONInput(strings.NewReader(bad))
+		if CNIConfig.Ipam.Index != 0 {
+			t.Errorf("Discovering index should have failed, but got index: %v", CNIConfig.Ipam.Index)
 		}
 	}
 }
@@ -258,13 +267,13 @@ func AddEndToEnd(t *testing.T, addcmd string) {
 	defer revertCni()
 
 	// The IP address in this test should come from the parsed index on stdin.
-	output := WithInputTestEndToEnd(t, addcmd, `{"ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
-	config := CniConfig{}
+	output := WithInputTestEndToEnd(t, addcmd, `{"cniVersion": "0.3.1", "ipam":{"index":5,"type":"index2ip"},"master":"eth0","name":"ipvlan","type":"ipvlan"}`)
+	config := CniResult{}
 	rtx.Must(json.Unmarshal(output, &config), "Could not unmarshal")
 	if config.CniVersion != "0.3.1" || config.IPs[0].Gateway != "4.14.159.65" {
 		t.Error("Bad data output from index2ip: ", string(output))
 	}
-	if "4.14.159.117/26" != config.IPs[0].Address {
+	if config.IPs[0].Address != "4.14.159.117/26" {
 		t.Error("Wrong IP returned when index 5 was provided")
 	}
 }
